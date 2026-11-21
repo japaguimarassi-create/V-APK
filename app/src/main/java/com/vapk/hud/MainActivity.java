@@ -25,14 +25,20 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 
 public final class MainActivity extends Activity {
+    public static final String EXTRA_HUD_START = "com.vapk.hud.HUD_START";
     private static final int REQUEST_OPEN = 4101;
     private static final int REQUEST_SAVE = 4102;
     private static final int DEFAULT_TRAINING_EPISODES = 120;
+    private static final int MAX_FILE_BYTES = 100_000;
 
     private EditText editor;
     private TextView status;
     private NeuralAgent agent;
+    private ScriptEngine.Plan pendingPlan;
+    private Thread scriptThread;
     private boolean training;
+    private volatile boolean scriptRunning;
+    private volatile boolean aiActive;
     private File modelFile;
 
     private int dp(float value) {
@@ -45,6 +51,24 @@ public final class MainActivity extends Activity {
         modelFile = new File(getFilesDir(), "model_4x100.bin");
         agent = new NeuralAgent(modelFile);
         buildInterface();
+        prepareScript();
+
+        if (!modelFile.isFile()) startTraining();
+        handleHudIntent(getIntent());
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleHudIntent(intent);
+    }
+
+    private void handleHudIntent(Intent intent) {
+        if (intent != null && intent.getBooleanExtra(EXTRA_HUD_START, false)) {
+            intent.removeExtra(EXTRA_HUD_START);
+            executePreparedScript();
+        }
     }
 
     private void buildInterface() {
@@ -61,7 +85,7 @@ public final class MainActivity extends Activity {
         page.addView(heading);
 
         TextView subheading = new TextView(this);
-        subheading.setText("Java • HUD flutuante • Aprendizado por reforço 4×100");
+        subheading.setText("Java 17 • HUD flutuante • Aprendizado por reforço 4×100");
         subheading.setTextColor(Color.rgb(146, 170, 198));
         subheading.setTextSize(12);
         subheading.setPadding(0, dp(4), 0, dp(14));
@@ -70,15 +94,20 @@ public final class MainActivity extends Activity {
         LinearLayout rowOne = row(page);
         addButton(rowOne, "Abrir arquivo", v -> openFile());
         addButton(rowOne, "Salvar como", v -> saveFile());
+
         LinearLayout rowTwo = row(page);
         addButton(rowTwo, "Mostrar HUD", v -> showHud());
-        addButton(rowTwo, "Executar", v -> runScript());
+        addButton(rowTwo, "Analisar / Esperar", v -> prepareScript());
+
         LinearLayout rowThree = row(page);
         addButton(rowThree, "Treinar IA", v -> startTraining());
         addButton(rowThree, "Parar treino", v -> stopTraining());
 
+        LinearLayout rowFour = row(page);
+        addButton(rowFour, "Parar arquivo", v -> stopScript());
+
         TextView editorLabel = new TextView(this);
-        editorLabel.setText("EDITOR DE SCRIPTS  (.java / .txt / .vapk)");
+        editorLabel.setText("ARQUIVO JAVA  (.java / .txt / .vapk)");
         editorLabel.setTextColor(Color.rgb(125, 190, 255));
         editorLabel.setTextSize(12);
         editorLabel.setTypeface(null, Typeface.BOLD);
@@ -88,32 +117,32 @@ public final class MainActivity extends Activity {
         editor = new EditText(this);
         editor.setTextColor(Color.rgb(227, 237, 249));
         editor.setHintTextColor(Color.rgb(110, 130, 153));
-        editor.setHint("Cole aqui os comandos Java da HUD...");
+        editor.setHint("Cole aqui os comandos da API HUD...");
         editor.setTextSize(13);
         editor.setTypeface(Typeface.MONOSPACE);
         editor.setGravity(Gravity.TOP | Gravity.START);
         editor.setInputType(InputType.TYPE_CLASS_TEXT
             | InputType.TYPE_TEXT_FLAG_MULTI_LINE
-            | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+            | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
         editor.setSingleLine(false);
         editor.setMinLines(14);
         editor.setPadding(dp(12), dp(12), dp(12), dp(12));
         editor.setBackgroundColor(Color.rgb(16, 27, 44));
         page.addView(editor, new LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, dp(310)));
+            LinearLayout.LayoutParams.MATCH_PARENT, dp(290)));
 
         TextView api = new TextView(this);
-        api.setText("API permitida: HUD.setTitle("texto");  HUD.setText("texto");\n"
-            + "HUD.log("texto");  HUD.setColor("#123456");\n"
-            + "HUD.setVisible(true);  HUD.waitMs(250);\n"
-            + "Arquivos Java podem conter uma classe e um método run() envolvendo esses comandos.");
+        api.setText("API permitida: HUD.setTitle(\"texto\"); HUD.setText(\"texto\");\n"
+            + "HUD.log(\"texto\"); HUD.setColor(\"#123456\");\n"
+            + "HUD.setVisible(true); HUD.waitMs(250);\n"
+            + "O arquivo é lido e validado primeiro. A execução só começa pelo botão no HUD.");
         api.setTextColor(Color.rgb(145, 165, 188));
         api.setTextSize(11);
         api.setPadding(0, dp(8), 0, dp(8));
         page.addView(api);
 
         status = new TextView(this);
-        status.setText("Pronto. O modelo neural será salvo no armazenamento privado do app.");
+        status.setText("Inicializando...");
         status.setTextColor(Color.rgb(125, 210, 170));
         status.setTextSize(12);
         status.setPadding(0, dp(8), 0, dp(8));
@@ -131,6 +160,8 @@ public final class MainActivity extends Activity {
             + "        HUD.setText(\"Agente neural pronto.\");\n"
             + "        HUD.log(\"Script iniciado\");\n"
             + "        HUD.setColor(\"#0D1627\");\n"
+            + "        HUD.waitMs(250);\n"
+            + "        HUD.log(\"Comandos finalizados\");\n"
             + "    }\n"
             + "}\n"
         );
@@ -166,30 +197,91 @@ public final class MainActivity extends Activity {
             Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                 Uri.parse("package:" + getPackageName()));
             startActivity(intent);
-            Toast.makeText(this, "Autorize a sobreposição e toque em Mostrar HUD novamente.", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Autorize a sobreposição e toque em Mostrar HUD novamente.",
+                Toast.LENGTH_LONG).show();
             return;
         }
         startService(new Intent(this, HudOverlayService.class));
-        setStatus("HUD iniciada. Arraste a barra superior para mover.");
+        setStatus("HUD iniciada. Use o botão LIGAR IA + EXECUTAR.");
     }
 
-    private void runScript() {
+    private void prepareScript() {
+        try {
+            pendingPlan = ScriptEngine.analyze(editor.getText().toString());
+            aiActive = false;
+            setStatus("ARQUIVO LIDO: " + pendingPlan.summary + " • IA EM ESPERA");
+            HudOverlayService.command("setTitle", "V-APK | IA EM ESPERA");
+            HudOverlayService.command("setStatus", "Arquivo analisado. Aguardando botão de ativação.");
+        } catch (Exception error) {
+            pendingPlan = null;
+            setStatus("ANÁLISE RECUSADA: " + error.getMessage());
+            HudOverlayService.command("setStatus", "Arquivo inválido. Nada foi executado.");
+        }
+    }
+
+    private void executePreparedScript() {
+        if (scriptRunning) {
+            setStatus("Já existe um arquivo em execução.");
+            return;
+        }
+        if (pendingPlan == null) {
+            prepareScript();
+            if (pendingPlan == null) {
+                Toast.makeText(this, "Carregue ou corrija um arquivo antes de executar.",
+                    Toast.LENGTH_LONG).show();
+                return;
+            }
+        }
         if (!hasOverlayPermission()) {
             showHud();
             return;
         }
-        startService(new Intent(this, HudOverlayService.class));
-        String source = editor.getText().toString();
-        setStatus("Validando e executando comandos permitidos...");
-        new Thread(() -> {
+
+        ScriptEngine.Plan plan = pendingPlan;
+        scriptRunning = true;
+        aiActive = false;
+        setStatus("HUD acionada. Aguardando o evento de início do arquivo...");
+        scriptThread = new Thread(() -> {
             try {
-                ScriptEngine engine = new ScriptEngine(HudOverlayService::command);
-                String result = engine.execute(source);
-                runOnUiThread(() -> setStatus(result));
+                String result = ScriptEngine.execute(plan, HudOverlayService::command, () -> {
+                    aiActive = true;
+                    HudOverlayService.command("setTitle", "V-APK | IA ATIVA");
+                    HudOverlayService.command("setStatus", "SCRIPT_STARTED detectado • IA ligada");
+                    runOnUiThread(() -> setStatus("INÍCIO DO ARQUIVO DETECTADO — IA ATIVA"));
+                });
+
+                runOnUiThread(() -> {
+                    aiActive = false;
+                    HudOverlayService.command("setTitle", "V-APK | IA EM ESPERA");
+                    HudOverlayService.command("setStatus", "Arquivo concluído. Aguardando novo acionamento.");
+                    setStatus(result + " • IA voltou ao modo de espera.");
+                });
+            } catch (InterruptedException error) {
+                Thread.currentThread().interrupt();
+                runOnUiThread(() -> {
+                    aiActive = false;
+                    HudOverlayService.command("setTitle", "V-APK | IA EM ESPERA");
+                    HudOverlayService.command("setStatus", "Execução cancelada.");
+                    setStatus("Execução interrompida.");
+                });
             } catch (Exception error) {
-                runOnUiThread(() -> setStatus("Script interrompido: " + error.getMessage()));
+                runOnUiThread(() -> setStatus("Falha na execução: " + error.getMessage()));
+            } finally {
+                scriptRunning = false;
+                scriptThread = null;
             }
-        }, "VAPK-Script").start();
+        }, "VAPK-Script");
+        scriptThread.start();
+    }
+
+    private void stopScript() {
+        Thread current = scriptThread;
+        if (current != null) current.interrupt();
+        scriptRunning = false;
+        aiActive = false;
+        HudOverlayService.command("setTitle", "V-APK | IA EM ESPERA");
+        HudOverlayService.command("setStatus", "Execução parada pelo usuário.");
+        setStatus("Execução parada.");
     }
 
     private void openFile() {
@@ -221,19 +313,22 @@ public final class MainActivity extends Activity {
                 int count;
                 while ((count = input.read(buffer)) != -1) {
                     output.write(buffer, 0, count);
-                    if (output.size() > 100_000) throw new IllegalArgumentException("Limite de 100 KB excedido.");
+                    if (output.size() > MAX_FILE_BYTES) {
+                        throw new IllegalArgumentException("Limite de 100 KB excedido.");
+                    }
                 }
                 editor.setText(output.toString("UTF-8"));
-                setStatus("Arquivo carregado.");
+                prepareScript();
             } catch (Exception error) {
-                setStatus("Falha ao abrir: " + error.getMessage());
+                pendingPlan = null;
+                setStatus("Falha ao abrir/analisar: " + error.getMessage());
             }
         } else if (requestCode == REQUEST_SAVE) {
             try (OutputStream output = getContentResolver().openOutputStream(uri)) {
                 if (output == null) throw new IllegalStateException("Não foi possível salvar o arquivo.");
                 output.write(editor.getText().toString().getBytes(StandardCharsets.UTF_8));
                 output.flush();
-                setStatus("Arquivo salvo.");
+                prepareScript();
             } catch (Exception error) {
                 setStatus("Falha ao salvar: " + error.getMessage());
             }
@@ -251,7 +346,7 @@ public final class MainActivity extends Activity {
             @Override
             public void onProgress(int episode, int total, int recentWins, double epsilon) {
                 runOnUiThread(() -> setStatus("Treino " + episode + "/" + total
-                    + " • vitórias na janela: " + recentWins
+                    + " • vitórias recentes: " + recentWins
                     + " • exploração: " + String.format(java.util.Locale.US, "%.2f", epsilon)));
             }
 
@@ -262,8 +357,8 @@ public final class MainActivity extends Activity {
                     if (games == 0) {
                         setStatus("Treino interrompido. Pesos parciais salvos.");
                     } else {
-                        setStatus("Avaliação simulada: " + wins + "/" + games
-                            + " vitórias. Modelo salvo localmente.");
+                        setStatus("Treinamento concluído. Avaliação: " + wins + "/" + games
+                            + " vitórias. Modelo salvo.");
                     }
                 });
             }
@@ -294,6 +389,7 @@ public final class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         if (training && agent != null) agent.stop();
+        if (scriptThread != null) scriptThread.interrupt();
         super.onDestroy();
     }
 }
