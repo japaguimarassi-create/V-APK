@@ -34,7 +34,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class MainActivity extends Activity {
     private static final int REQUEST_OPEN = 6101;
     private static final int REQUEST_SAVE = 6102;
-    private static final int TRAINING_EPISODES = 150;
+    private static final int TRAINING_EPISODES = 80;
 
     private EditText editor;
     private TextView status;
