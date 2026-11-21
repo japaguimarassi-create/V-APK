@@ -1,67 +1,90 @@
-# V-APK
+# V-APK 2.0
 
-Aplicativo Android em Java 17 com HUD flutuante, analisador de arquivos Java-like e agente neural treinado por aprendizado por reforço.
+Aplicativo Android nativo em Java 17, reconstruído com HUD flutuante, automação entre aplicativos via Android Accessibility Service e rede neural 4×100 com aprendizado por reforço.
 
-## Fluxo do arquivo
+## O que foi reconstruído
 
-1. Toque em **Abrir arquivo** e selecione um arquivo `.java`, `.txt` ou `.vapk`.
-2. O V-APK lê o conteúdo, analisa toda a estrutura aceita e valida cada comando antes de executar qualquer um.
-3. Depois da análise, a IA fica em **modo de espera**.
-4. Toque em **LIGAR IA + EXECUTAR** na janela HUD.
-5. O executor emite o evento interno `SCRIPT_STARTED` imediatamente antes do primeiro comando. Nesse momento, a IA muda para ativa e o plano validado é executado na HUD.
-6. Ao terminar, a IA volta ao modo de espera.
+- Interface nativa Android com editor, importação e exportação de arquivos.
+- HUD flutuante arrastável.
+- Serviço de acessibilidade separado, ativado manualmente pelo usuário nas configurações do Android.
+- Script Java-like com lista fechada de comandos e limite de tamanho, quantidade de instruções e tempo de espera.
+- Rede neural com arquitetura 4 → 100 → 100 → 100 → 100 → 5.
+- Arena de inimigos simulados, recompensas, penalizações, replay buffer, exploração epsilon-greedy, rede-alvo e Double DQN.
+- Salvamento local do modelo treinado.
 
-A HUD é uma sobreposição Android arrastável. O sistema pedirá a permissão **Exibir sobre outros apps**.
+## Usar em outros aplicativos
 
-## Formato Java aceito
+1. Abra o V-APK.
+2. Toque em **Ativar HUD** e conceda a permissão de sobreposição.
+3. Toque em **Acessibilidade**.
+4. Nas configurações do Android, entre em **Serviços instalados** e ative **V-APK Automation**.
+5. Abra o aplicativo que deseja automatizar.
+6. Volte ao V-APK, carregue ou escreva um script e toque em **Executar script**.
 
-O arquivo pode usar uma classe e um método `run()`. O V-APK interpreta somente os comandos da API HUD abaixo; ele não compila nem executa bytecode Java arbitrário.
+O serviço opera sobre a interface atualmente visível e somente após a autorização explícita do usuário. Ele não injeta código em processos de terceiros, não lê nem transmite o conteúdo de eventos e não preenche campos de senha. Apps podem impedir automação em telas seguras, conteúdo protegido, interfaces desenhadas em canvas ou componentes que não exponham semântica de acessibilidade. Portanto, não há garantia de compatibilidade com todos os aplicativos.
+
+## Comandos disponíveis
+
+Cada comando deve ocupar uma linha. Um wrapper simples de classe/método Java é aceito, mas o app executa somente as instruções documentadas abaixo; não compila bytecode Java arbitrário nem interpreta chamadas de APIs livres.
 
 ```java
 public class Example {
     public static void run() {
-        HUD.setTitle("V-APK / Java");
-        HUD.setText("Agente neural pronto.");
-        HUD.log("Script iniciado");
-        HUD.setColor("#0D1627");
-        HUD.waitMs(250);
-        HUD.log("Comandos finalizados");
+        HUD.setTitle("V-APK");
+        HUD.setText("Automação pronta");
+        HUD.log("Começando");
+        HUD.setColor("#102030");
+
+        APP.tapText("Continuar");
+        APP.typeText("Texto de teste");
+        APP.scroll("forward");
+        APP.scroll("backward");
+        APP.back();
+
+        APP.waitMs(300);
         HUD.setVisible(true);
     }
 }
 ```
 
-Comandos permitidos:
+- `HUD.setTitle("texto")`: altera o título da HUD.
+- `HUD.setText("texto")`: substitui o texto da HUD.
+- `HUD.log("texto")`: adiciona uma mensagem à HUD.
+- `HUD.setColor("#RRGGBB")`: altera a cor do painel.
+- `HUD.setVisible(true)`: mostra a HUD; `false` a oculta.
+- `APP.tapText("texto exato")`: tenta clicar no elemento visível com esse texto ou descrição.
+- `APP.typeText("texto")`: define o texto no campo editável atualmente focado. Campos de senha são recusados.
+- `APP.scroll("forward")` ou `APP.scroll("backward")`: rola a primeira área rolável da janela ativa.
+- `APP.back()`: executa a ação Voltar do Android.
+- `APP.waitMs(300)`: pausa o script; o total de espera não pode exceder 30 segundos.
 
-- `HUD.setTitle("texto")`
-- `HUD.setText("texto")`
-- `HUD.log("texto")`
-- `HUD.setColor("#RRGGBB")`
-- `HUD.setVisible(true | false)`
-- `HUD.waitMs(0..1000)`
+Limites: 100 KB por arquivo, 250 comandos por execução, 5 segundos por pausa e 30 segundos somados de espera. A automação só começa quando o usuário toca em **Executar script** e pode ser cancelada no app.
 
-Limites: 100 KB por arquivo, 100 comandos e 5 segundos de espera acumulada. Qualquer instrução fora dessa API faz o arquivo inteiro ser recusado antes da execução.
+## Rede neural
 
-O executor atual modifica apenas a HUD do V-APK. Ele não injeta comandos em outros aplicativos nem executa operações arbitrárias no Android. Para controlar outro aplicativo/jogo, será necessária uma integração específica e autorizada.
+A política recebe quatro valores normalizados: distância do inimigo, vida do agente, vida do inimigo e indicador de perigo imediato. Ela escolhe entre aproximar, recuar, atacar, bloquear e esquivar.
 
-## Rede neural e treinamento
+O treinamento inclui:
+- exploração epsilon-greedy;
+- replay buffer de 4.000 transições;
+- mini-lotes de 16 experiências;
+- desconto temporal `gamma = 0.97`;
+- taxa de aprendizado `0.0002`;
+- rede-alvo atualizada periodicamente;
+- cálculo Double DQN do valor da próxima ação;
+- recompensas por causar dano e vencer, penalidades por errar ataques e sofrer dano;
+- checkpoint do melhor modelo avaliado.
 
-A rede é um Deep Q-Network com quatro entradas, quatro camadas ocultas de 100 neurônios e cinco saídas de ação:
+O modelo é treinado na arena simulada incorporada ao app. Os resultados da arena não comprovam habilidade em jogos comerciais nem em cenários externos. O arquivo de pesos fica no armazenamento privado do V-APK.
 
-`4 → 100 → 100 → 100 → 100 → 5`
+## Compilar
 
-O agente treina numa arena de combate simulada contra um inimigo. As observações incluem distância, vida do jogador, vida do inimigo e nível de perigo. As ações incluem aproximar, recuar, atacar, esquivar e defender. O treinamento usa recompensas/penalidades, replay buffer, atualização temporal-difference e uma rede-alvo. O APK inclui um modelo-base quantizado; o botão **Treinar IA** executa mais 120 episódios de aprendizado por reforço.
-
-O modelo é salvo no armazenamento privado do aplicativo como `model_4x100.bin`. A avaliação final usa 100 partidas simuladas.
-
-## Compilação
-
-O GitHub Actions compila o APK de depuração a cada push na branch `main` e publica o artefato `V-APK-debug`.
-
-Requisitos para compilação manual: JDK 17, Android SDK Platform 35, Build Tools 35.0.0 e Gradle 8.9.
+Requisitos: JDK 17, Android SDK Platform 35, Android Build Tools 35.0.0 e Gradle 8.9.
 
 ```bash
-gradle --no-daemon :app:assembleDebug
+gradle clean :app:assembleDebug
 ```
 
-Saída: `app/build/outputs/apk/debug/app-debug.apk`.
+APK: `app/build/outputs/apk/debug/app-debug.apk`.
+
+O GitHub Actions compila em cada push na branch `main` e publica o APK de debug como artefato da execução.
