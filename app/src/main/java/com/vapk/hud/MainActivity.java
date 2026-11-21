@@ -9,6 +9,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.text.InputType;
+import android.util.Base64;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
@@ -49,6 +50,7 @@ public final class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         modelFile = new File(getFilesDir(), "model_4x100.bin");
+        installSeedModel();
         agent = new NeuralAgent(modelFile);
         buildInterface();
         prepareScript();
@@ -68,6 +70,23 @@ public final class MainActivity extends Activity {
         if (intent != null && intent.getBooleanExtra(EXTRA_HUD_START, false)) {
             intent.removeExtra(EXTRA_HUD_START);
             executePreparedScript();
+        }
+    }
+
+
+    private void installSeedModel() {
+        if (modelFile.exists()) return;
+        try (InputStream input = getAssets().open("pretrained_4x100.b64");
+             ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[4096];
+            int count;
+            while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+            byte[] decoded = Base64.decode(output.toByteArray(), Base64.DEFAULT);
+            try (java.io.FileOutputStream model = new java.io.FileOutputStream(modelFile)) {
+                model.write(decoded);
+                model.flush();
+            }
+        } catch (Exception ignored) {
         }
     }
 
