@@ -50,7 +50,7 @@ A rede é um Deep Q-Network com quatro entradas, quatro camadas ocultas de 100 n
 
 `4 → 100 → 100 → 100 → 100 → 5`
 
-O agente treina numa arena de combate simulada contra um inimigo. As observações incluem distância, vida do jogador, vida do inimigo e nível de perigo. As ações incluem aproximar, recuar, atacar, esquivar e defender. O treinamento usa recompensas/penalidades, replay buffer, atualização temporal-difference e uma rede-alvo. No primeiro início, o app treina 120 episódios; é possível repetir o treinamento pelo botão **Treinar IA**.
+O agente treina numa arena de combate simulada contra um inimigo. As observações incluem distância, vida do jogador, vida do inimigo e nível de perigo. As ações incluem aproximar, recuar, atacar, esquivar e defender. O treinamento usa recompensas/penalidades, replay buffer, atualização temporal-difference e uma rede-alvo. O APK inclui um modelo-base quantizado; o botão **Treinar IA** executa mais 120 episódios de aprendizado por reforço.
 
 O modelo é salvo no armazenamento privado do aplicativo como `model_4x100.bin`. A avaliação final usa 100 partidas simuladas.
 
