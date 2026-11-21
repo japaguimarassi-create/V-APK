@@ -110,8 +110,8 @@ public final class NeuralAgent {
                 }
             }
 
-            online.copyFrom(bestSnapshot);
-            target.copyFrom(bestSnapshot);
+            if (!stopRequested) online.copyFrom(bestSnapshot);
+            target.copyFrom(online);
             if (modelFile != null) online.save(modelFile);
 
             if (stopRequested) {
