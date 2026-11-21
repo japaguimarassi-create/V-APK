@@ -21,7 +21,7 @@ public final class NeuralAgent {
     private static final int ACTIONS = 5;
     private static final int[] SIZES = {4, 100, 100, 100, 100, 5};
     private static final int REPLAY_CAPACITY = 5000;
-    private static final int BATCH_SIZE = 32;
+    private static final int BATCH_SIZE = 8;
     private static final double GAMMA = 0.97;
     private static final double LEARNING_RATE = 0.00025;
     private static final int MODEL_VERSION = 1;
@@ -88,8 +88,8 @@ public final class NeuralAgent {
                     remember(new Transition(state, action, step.reward, nextState, step.done));
                     state = nextState;
 
-                    if (replaySize >= BATCH_SIZE) {
-                        for (int k = 0; k < 1; k++) learnBatch();
+                    if (replaySize >= BATCH_SIZE && turns % 3 == 0) {
+                        learnBatch();
                     }
                 }
 
