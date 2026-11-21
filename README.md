@@ -1,61 +1,67 @@
 # V-APK
 
-Android app in Java 17 with a floating HUD, a restricted Java-like script runner, and a reinforcement-learning agent.
+Aplicativo Android em Java 17 com HUD flutuante, analisador de arquivos Java-like e agente neural treinado por aprendizado por reforço.
 
-## Current flow
+## Fluxo do arquivo
 
-1. Select a text or `.java` file.
-2. V-APK reads the complete file (up to 128 KB) and validates every command.
-3. After validation, the agent enters **standby**. Nothing in the file runs during analysis.
-4. Tap **LIGAR IA + EXECUTAR ARQUIVO** in the floating HUD. The app brings the runner forward and emits its internal `SCRIPT_STARTED` event immediately before the first command.
-5. The agent changes to active state and the validated command plan runs in the app's restricted virtual-bot environment.
+1. Toque em **Abrir arquivo** e selecione um arquivo `.java`, `.txt` ou `.vapk`.
+2. O V-APK lê o conteúdo, analisa toda a estrutura aceita e valida cada comando antes de executar qualquer um.
+3. Depois da análise, a IA fica em **modo de espera**.
+4. Toque em **LIGAR IA + EXECUTAR** na janela HUD.
+5. O executor emite o evento interno `SCRIPT_STARTED` imediatamente antes do primeiro comando. Nesse momento, a IA muda para ativa e o plano validado é executado na HUD.
+6. Ao terminar, a IA volta ao modo de espera.
 
-The HUD is an Android overlay. Android will ask for the "Display over other apps" permission.
+A HUD é uma sobreposição Android arrastável. O sistema pedirá a permissão **Exibir sobre outros apps**.
 
-## Java script format
+## Formato Java aceito
 
-This is a deliberately restricted Java-like `BotApi` program. It is parsed and interpreted by the app; it is **not** compiled as arbitrary Java bytecode.
+O arquivo pode usar uma classe e um método `run()`. O V-APK interpreta somente os comandos da API HUD abaixo; ele não compila nem executa bytecode Java arbitrário.
 
 ```java
-public final class ExampleBot {
-    public static void run(BotApi bot) {
-        bot.log("Starting sequence");
-        bot.move("right");
-        bot.waitMs(250);
-        bot.attack();
-        bot.move("up");
-        bot.log("Sequence complete");
+public class Example {
+    public static void run() {
+        HUD.setTitle("V-APK / Java");
+        HUD.setText("Agente neural pronto.");
+        HUD.log("Script iniciado");
+        HUD.setColor("#0D1627");
+        HUD.waitMs(250);
+        HUD.log("Comandos finalizados");
+        HUD.setVisible(true);
     }
 }
 ```
 
-Allowed calls:
+Comandos permitidos:
 
-- `bot.move("up" | "down" | "left" | "right")`
-- `bot.attack()`
-- `bot.waitMs(0..2000)`
-- `bot.log("message")`
+- `HUD.setTitle("texto")`
+- `HUD.setText("texto")`
+- `HUD.log("texto")`
+- `HUD.setColor("#RRGGBB")`
+- `HUD.setVisible(true | false)`
+- `HUD.waitMs(0..1000)`
 
-Maximums: 128 KB per file, 300 commands per file, 2,000 ms per wait. Any unsupported statement causes the entire file to be rejected before execution. The current BotApi controls only the app's virtual bot; it does not inject code into other apps or control Android globally.
+Limites: 100 KB por arquivo, 100 comandos e 5 segundos de espera acumulada. Qualquer instrução fora dessa API faz o arquivo inteiro ser recusado antes da execução.
 
-## Neural network and training
+O executor atual modifica apenas a HUD do V-APK. Ele não injeta comandos em outros aplicativos nem executa operações arbitrárias no Android. Para controlar outro aplicativo/jogo, será necessária uma integração específica e autorizada.
 
-The model is a Deep Q-Network with 8 inputs, four hidden layers of 100 neurons each, and 5 action values:
+## Rede neural e treinamento
 
-`8 → 100 → 100 → 100 → 100 → 5`
+A rede é um Deep Q-Network com quatro entradas, quatro camadas ocultas de 100 neurônios e cinco saídas de ação:
 
-Training happens on-device in a 10×10 arena. The agent faces a pursuing enemy, learns to reach a goal, and can use an attack action when close to the enemy. Rewards and penalties are stored in a replay buffer and used for temporal-difference updates. The model is persisted in the app's private storage as `neural-4x100.bin`.
+`4 → 100 → 100 → 100 → 100 → 5`
 
-The app starts with a short training run when no model is saved. The training button starts another 250-episode run.
+O agente treina numa arena de combate simulada contra um inimigo. As observações incluem distância, vida do jogador, vida do inimigo e nível de perigo. As ações incluem aproximar, recuar, atacar, esquivar e defender. O treinamento usa recompensas/penalidades, replay buffer, atualização temporal-difference e uma rede-alvo. No primeiro início, o app treina 120 episódios; é possível repetir o treinamento pelo botão **Treinar IA**.
 
-## Build
+O modelo é salvo no armazenamento privado do aplicativo como `model_4x100.bin`. A avaliação final usa 100 partidas simuladas.
 
-Pushes to `main` run the Android build workflow. The debug APK is uploaded as the GitHub Actions artifact `V-APK-debug`.
+## Compilação
 
-Manual build requirements: JDK 17, Android SDK Platform 35, Build Tools 35.0.0, and Gradle 8.9.
+O GitHub Actions compila o APK de depuração a cada push na branch `main` e publica o artefato `V-APK-debug`.
+
+Requisitos para compilação manual: JDK 17, Android SDK Platform 35, Build Tools 35.0.0 e Gradle 8.9.
 
 ```bash
-gradle :app:assembleDebug
+gradle --no-daemon :app:assembleDebug
 ```
 
-APK output: `app/build/outputs/apk/debug/app-debug.apk`.
+Saída: `app/build/outputs/apk/debug/app-debug.apk`.
