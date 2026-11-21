@@ -12,6 +12,7 @@ import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
+import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -55,7 +56,7 @@ public final class HudOverlayService extends Service {
         header.setGravity(Gravity.CENTER_VERTICAL);
         header.setBackgroundColor(Color.rgb(20, 49, 78));
 
-        titleView = label("V-APK HUD", 14, Color.WHITE);
+        titleView = label("V-APK | IA EM ESPERA", 13, Color.WHITE);
         titleView.setTypeface(null, 1);
         header.addView(titleView, new LinearLayout.LayoutParams(0, dp(40), 1));
 
@@ -64,31 +65,52 @@ public final class HudOverlayService extends Service {
         header.addView(close, new LinearLayout.LayoutParams(dp(42), dp(40)));
         close.setOnClickListener(v -> stopSelf());
 
-        bodyView = label("HUD pronta. Carregue um script no app.", 12, Color.rgb(220, 232, 245));
-        bodyView.setMinHeight(dp(65));
+        bodyView = label("Arquivo analisado. IA aguardando acionamento.", 12,
+                Color.rgb(220, 232, 245));
+        bodyView.setMinHeight(dp(58));
         bodyView.setMaxWidth(dp(260));
         panel.addView(header);
         panel.addView(bodyView);
 
+        Button activate = new Button(this);
+        activate.setText("LIGAR IA + EXECUTAR");
+        activate.setTextSize(11);
+        activate.setAllCaps(false);
+        activate.setTextColor(Color.WHITE);
+        activate.setBackgroundTintList(android.content.res.ColorStateList.valueOf(
+                Color.rgb(26, 104, 177)));
+        LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(48));
+        buttonParams.setMargins(dp(5), dp(3), dp(5), dp(5));
+        panel.addView(activate, buttonParams);
+        activate.setOnClickListener(v -> {
+            Intent intent = new Intent(this, MainActivity.class);
+            intent.putExtra(MainActivity.EXTRA_HUD_START, true);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP
+                    | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            startActivity(intent);
+        });
+
         int type = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
-            ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-            : WindowManager.LayoutParams.TYPE_PHONE;
+                ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                : WindowManager.LayoutParams.TYPE_PHONE;
 
         WindowManager.LayoutParams params = new WindowManager.LayoutParams(
-            dp(270),
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            type,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-            PixelFormat.TRANSLUCENT
-        );
+                dp(270),
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                type,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                PixelFormat.TRANSLUCENT);
         params.gravity = Gravity.TOP | Gravity.START;
         params.x = dp(12);
         params.y = dp(110);
 
         header.setOnTouchListener(new View.OnTouchListener() {
-            private int initialX, initialY;
-            private float touchX, touchY;
+            private int initialX;
+            private int initialY;
+            private float touchX;
+            private float touchY;
 
             @Override
             public boolean onTouch(View view, MotionEvent event) {
@@ -129,6 +151,7 @@ public final class HudOverlayService extends Service {
                 bodyView.setText(bodyView.getText() + "\n" + value);
                 break;
             case "setText":
+            case "setStatus":
                 bodyView.setText(value);
                 break;
             case "setTitle":
@@ -155,7 +178,10 @@ public final class HudOverlayService extends Service {
     @Override
     public void onDestroy() {
         if (overlay != null && overlay.getParent() != null) {
-            windowManager.removeView(overlay);
+            try {
+                windowManager.removeView(overlay);
+            } catch (Exception ignored) {
+            }
         }
         overlay = null;
         instance = null;
