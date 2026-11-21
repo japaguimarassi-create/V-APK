@@ -16,20 +16,19 @@ public final class NeuralAgent {
         void onError(Exception error);
     }
 
-    private static final int INPUTS = 4;
-    private static final int HIDDEN = 100;
+    private static final int[] LAYERS = {4, 100, 100, 100, 100, 5};
     private static final int ACTIONS = 5;
-    private static final int[] SIZES = {4, 100, 100, 100, 100, 5};
-    private static final int REPLAY_CAPACITY = 5000;
-    private static final int BATCH_SIZE = 8;
+    private static final int REPLAY_CAPACITY = 4000;
+    private static final int BATCH_SIZE = 16;
     private static final double GAMMA = 0.97;
-    private static final double LEARNING_RATE = 0.00025;
-    private static final int MODEL_VERSION = 1;
+    private static final double LEARNING_RATE = 0.0002;
+    private static final int MAGIC = 0x5641504B;
+    private static final int MODEL_VERSION = 2;
 
-    private final QNet online = new QNet();
-    private final QNet target = new QNet();
+    private final QNetwork online = new QNetwork();
+    private final QNetwork target = new QNetwork();
     private final Transition[] replay = new Transition[REPLAY_CAPACITY];
-    private final Random random = new Random(42);
+    private final Random random = new Random(73921L);
     private int replaySize;
     private int replayCursor;
     private int updateCount;
@@ -45,23 +44,23 @@ public final class NeuralAgent {
                 loaded = false;
             }
         }
-        if (!loaded) online.reset(new Random(42));
+        if (!loaded) online.reset(random);
         target.copyFrom(online);
     }
 
-    public void stop() {
+    public synchronized void stop() {
         stopRequested = true;
     }
 
-    public int chooseAction(double[] state) {
-        return greedyAction(state);
+    public int chooseAction(double[] observation) {
+        return greedyAction(observation);
     }
 
-    private int greedyAction(double[] state) {
-        double[] values = online.predict(state);
+    private int greedyAction(double[] observation) {
+        double[] q = online.predict(observation);
         int best = 0;
-        for (int i = 1; i < values.length; i++) {
-            if (values[i] > values[best]) best = i;
+        for (int i = 1; i < q.length; i++) {
+            if (q[i] > q[best]) best = i;
         }
         return best;
     }
@@ -69,77 +68,85 @@ public final class NeuralAgent {
     public void train(File modelFile, int episodes, Listener listener) {
         stopRequested = false;
         try {
-            QNet bestSnapshot = new QNet();
+            QNetwork bestSnapshot = new QNetwork();
             bestSnapshot.copyFrom(online);
-            int bestScore = evaluate(100);
+            int bestScore = evaluate(30);
             int winsInWindow = 0;
+            int checkpointInterval = Math.max(20, episodes / 5);
+
             for (int episode = 1; episode <= episodes && !stopRequested; episode++) {
-                double epsilon = Math.max(0.05, 1.0 - 0.95 * (episode - 1) / Math.max(1.0, episodes - 1.0));
+                double epsilon = Math.max(0.06,
+                    1.0 - 0.94 * (episode - 1.0) / Math.max(1.0, episodes - 1.0));
                 Arena arena = new Arena(random);
-                double[] state = arena.state();
+                double[] state = arena.observation();
                 int turns = 0;
 
-                while (!arena.done && turns++ < 60 && !stopRequested) {
-                    int action;
-                    if (random.nextDouble() < epsilon) {
-                        action = random.nextInt(ACTIONS);
-                    } else {
-                        action = greedyAction(state);
-                    }
+                while (!arena.done && turns < 55 && !stopRequested) {
+                    turns++;
+                    int action = random.nextDouble() < epsilon
+                        ? random.nextInt(ACTIONS)
+                        : greedyAction(state);
 
                     Step step = arena.step(action, random);
-                    double[] nextState = arena.state();
+                    double[] nextState = arena.observation();
                     remember(new Transition(state, action, step.reward, nextState, step.done));
                     state = nextState;
 
-                    if (replaySize >= BATCH_SIZE && turns % 3 == 0) {
-                        learnBatch();
-                    }
+                    if (replaySize >= BATCH_SIZE && turns % 3 == 0) learnBatch();
                 }
 
                 if (arena.playerWon) winsInWindow++;
-                if (episode % 20 == 0 || episode == episodes) {
-                    int score = evaluate(100);
+
+                if (episode % checkpointInterval == 0 || episode == episodes) {
+                    int score = evaluate(30);
                     if (score >= bestScore) {
                         bestScore = score;
                         bestSnapshot.copyFrom(online);
                     }
-                    if (listener != null) listener.onProgress(episode, episodes, winsInWindow, epsilon);
+                    if (listener != null) listener.onProgress(
+                        episode, episodes, winsInWindow, epsilon
+                    );
                     winsInWindow = 0;
                 }
             }
 
             online.copyFrom(bestSnapshot);
+            target.copyFrom(bestSnapshot);
             if (modelFile != null) online.save(modelFile);
-            if (listener != null) {
-                if (stopRequested) listener.onComplete(-1, 0, modelFile);
-                else listener.onComplete(bestScore, 100, modelFile);
+
+            if (stopRequested) {
+                if (listener != null) listener.onComplete(-1, 0, modelFile);
+            } else {
+                int finalWins = evaluate(100);
+                if (listener != null) listener.onComplete(finalWins, 100, modelFile);
             }
         } catch (Exception error) {
             if (listener != null) listener.onError(error);
         }
     }
 
-    private void remember(Transition transition) {
-        replay[replayCursor] = transition;
+    private void remember(Transition item) {
+        replay[replayCursor] = item;
         replayCursor = (replayCursor + 1) % REPLAY_CAPACITY;
         if (replaySize < REPLAY_CAPACITY) replaySize++;
     }
 
     private void learnBatch() {
         for (int n = 0; n < BATCH_SIZE; n++) {
-            Transition t = replay[random.nextInt(replaySize)];
-            double expected = t.reward;
-            if (!t.done) {
-                double[] onlineNext = online.predict(t.nextState);
-                int bestNextAction = 0;
+            Transition item = replay[random.nextInt(replaySize)];
+            double expected = item.reward;
+
+            if (!item.done) {
+                double[] onlineNext = online.predict(item.nextState);
+                int bestAction = 0;
                 for (int i = 1; i < onlineNext.length; i++) {
-                    if (onlineNext[i] > onlineNext[bestNextAction]) bestNextAction = i;
+                    if (onlineNext[i] > onlineNext[bestAction]) bestAction = i;
                 }
-                double[] targetNext = target.predict(t.nextState);
-                expected += GAMMA * targetNext[bestNextAction];
+                double[] targetNext = target.predict(item.nextState);
+                expected += GAMMA * targetNext[bestAction];
             }
-            online.trainOne(t.state, t.action, expected, LEARNING_RATE);
+
+            online.trainOne(item.state, item.action, expected, LEARNING_RATE);
             updateCount++;
             if (updateCount % 250 == 0) target.copyFrom(online);
         }
@@ -147,11 +154,12 @@ public final class NeuralAgent {
 
     private int evaluate(int games) {
         int wins = 0;
-        for (int i = 0; i < games; i++) {
-            Arena arena = new Arena(new Random(10_000L + i));
-            int turns = 0;
-            while (!arena.done && turns++ < 60) {
-                arena.step(greedyAction(arena.state()), new Random(20_000L + i * 71L + turns));
+        for (int game = 0; game < games; game++) {
+            Arena arena = new Arena(new Random(90_000L + game));
+            Random enemyRandom = new Random(190_000L + game);
+            int turn = 0;
+            while (!arena.done && turn++ < 55) {
+                arena.step(greedyAction(arena.observation()), enemyRandom);
             }
             if (arena.playerWon) wins++;
         }
@@ -185,7 +193,7 @@ public final class NeuralAgent {
     }
 
     private static final class Arena {
-        double distance = 0.86;
+        double distance;
         double playerHealth = 1.0;
         double enemyHealth = 1.0;
         int enemyCooldown;
@@ -194,182 +202,220 @@ public final class NeuralAgent {
         boolean playerWon;
 
         Arena(Random random) {
-            enemyCooldown = 1 + random.nextInt(2);
+            distance = 0.48 + random.nextDouble() * 0.48;
+            enemyCooldown = 1 + random.nextInt(3);
         }
 
-        double[] state() {
-            double danger = distance < 0.62 && enemyCooldown <= 1 ? 1.0 : 0.0;
-            return new double[] {distance, playerHealth, enemyHealth, danger};
+        double[] observation() {
+            double danger = distance < 0.68 && enemyCooldown <= 1 ? 1.0 : 0.0;
+            return new double[] {
+                clamp(distance),
+                clamp(playerHealth),
+                clamp(enemyHealth),
+                danger
+            };
         }
 
         Step step(int action, Random random) {
-            if (done) return new Step(0, true);
+            if (done) return new Step(0.0, true);
             turns++;
-            double reward = -0.01;
+            double reward = -0.012;
 
             if (action == 0) {
                 distance = Math.max(0.12, distance - 0.12);
-                reward += 0.08;
+                reward += 0.025;
             } else if (action == 1) {
                 distance = Math.min(0.98, distance + 0.12);
-                reward += 0.015;
+                reward += 0.008;
             } else if (action == 2) {
-                if (distance <= 0.46) {
-                    enemyHealth = Math.max(0, enemyHealth - 0.17);
-                    reward += 2.0;
+                if (distance <= 0.47) {
+                    double damage = 0.17 + random.nextDouble() * 0.05;
+                    enemyHealth = Math.max(0.0, enemyHealth - damage);
+                    reward += 2.0 * damage / 0.17;
                 } else {
-                    reward -= 0.15;
+                    reward -= 0.18;
                 }
             } else if (action == 3) {
-                reward -= 0.015;
+                reward += 0.012;
             } else if (action == 4) {
-                reward -= 0.005;
+                reward += 0.006;
             }
 
             enemyCooldown--;
-            if (enemyCooldown <= 0 && distance < 0.62) {
-                double damage;
-                if (action == 3) {
-                    damage = 0.008;
-                } else if (action == 4 && random.nextDouble() < 0.72) {
-                    damage = 0.0;
-                    reward += 0.10;
-                } else {
-                    damage = 0.075;
+            if (enemyCooldown <= 0) {
+                if (distance < 0.68) {
+                    double damage;
+                    if (action == 3) {
+                        damage = 0.018;
+                        reward += 0.12;
+                    } else if (action == 4 && random.nextDouble() < 0.72) {
+                        damage = 0.0;
+                        reward += 0.18;
+                    } else {
+                        damage = 0.075;
+                    }
+                    playerHealth = Math.max(0.0, playerHealth - damage);
+                    reward -= damage * 18.0;
                 }
-                playerHealth = Math.max(0, playerHealth - damage);
-                reward -= damage * 14.0;
-                enemyCooldown = 2 + random.nextInt(2);
-            } else if (enemyCooldown < 0) {
-                enemyCooldown = 0;
+                enemyCooldown = 2 + random.nextInt(3);
             }
 
-            if (enemyHealth <= 0) {
+            if (random.nextDouble() < 0.22) {
+                distance = Math.max(0.12, distance - 0.025);
+            }
+
+            if (enemyHealth <= 0.0) {
                 reward += 12.0;
                 done = true;
                 playerWon = true;
-            } else if (playerHealth <= 0) {
+            } else if (playerHealth <= 0.0) {
                 reward -= 12.0;
                 done = true;
-            } else if (turns >= 60) {
-                reward -= 1.0;
+            } else if (turns >= 55) {
+                reward -= 1.5;
                 done = true;
+                playerWon = enemyHealth < playerHealth;
+                if (playerWon) reward += 3.0;
             }
             return new Step(reward, done);
         }
+
+        private double clamp(double value) {
+            return Math.max(0.0, Math.min(1.0, value));
+        }
     }
 
-    private static final class QNet {
-        private final double[][][] w = new double[5][][];
-        private final double[][] b = new double[5][];
-        private final double[][][] mw = new double[5][][];
-        private final double[][][] vw = new double[5][][];
-        private final double[][] mb = new double[5][];
-        private final double[][] vb = new double[5][];
+    private static final class QNetwork {
+        private final double[][][] weights = new double[5][][];
+        private final double[][] biases = new double[5][];
+        private final double[][][] firstMoment = new double[5][][];
+        private final double[][][] secondMoment = new double[5][][];
+        private final double[][] biasFirstMoment = new double[5][];
+        private final double[][] biasSecondMoment = new double[5][];
         private long adamStep;
 
-        QNet() {
-            for (int l = 0; l < 5; l++) {
-                int in = SIZES[l];
-                int out = SIZES[l + 1];
-                w[l] = new double[out][in];
-                b[l] = new double[out];
-                mw[l] = new double[out][in];
-                vw[l] = new double[out][in];
-                mb[l] = new double[out];
-                vb[l] = new double[out];
+        QNetwork() {
+            for (int layer = 0; layer < 5; layer++) {
+                int inputs = LAYERS[layer];
+                int outputs = LAYERS[layer + 1];
+                weights[layer] = new double[outputs][inputs];
+                biases[layer] = new double[outputs];
+                firstMoment[layer] = new double[outputs][inputs];
+                secondMoment[layer] = new double[outputs][inputs];
+                biasFirstMoment[layer] = new double[outputs];
+                biasSecondMoment[layer] = new double[outputs];
             }
         }
 
         void reset(Random random) {
-            for (int l = 0; l < 5; l++) {
-                double scale = Math.sqrt(1.0 / SIZES[l]);
-                for (int j = 0; j < SIZES[l + 1]; j++) {
-                    b[l][j] = 0;
-                    for (int i = 0; i < SIZES[l]; i++) {
-                        w[l][j][i] = (random.nextDouble() * 2.0 - 1.0) * scale;
+            for (int layer = 0; layer < 5; layer++) {
+                double limit = Math.sqrt(6.0 / (LAYERS[layer] + LAYERS[layer + 1]));
+                for (int output = 0; output < LAYERS[layer + 1]; output++) {
+                    biases[layer][output] = 0.0;
+                    for (int input = 0; input < LAYERS[layer]; input++) {
+                        weights[layer][output][input] = (random.nextDouble() * 2.0 - 1.0) * limit;
                     }
                 }
             }
-            adamStep = 0;
+            adamStep = 0L;
         }
 
         double[] predict(double[] input) {
+            if (input == null || input.length != LAYERS[0]) {
+                throw new IllegalArgumentException("A rede espera quatro entradas.");
+            }
             double[] activation = input;
-            for (int l = 0; l < 5; l++) {
-                double[] next = new double[SIZES[l + 1]];
-                for (int j = 0; j < next.length; j++) {
-                    double sum = b[l][j];
-                    for (int i = 0; i < activation.length; i++) sum += w[l][j][i] * activation[i];
-                    next[j] = l == 4 ? sum : Math.tanh(sum);
+            for (int layer = 0; layer < 5; layer++) {
+                double[] next = new double[LAYERS[layer + 1]];
+                for (int output = 0; output < next.length; output++) {
+                    double sum = biases[layer][output];
+                    for (int in = 0; in < activation.length; in++) {
+                        sum += weights[layer][output][in] * activation[in];
+                    }
+                    next[output] = layer == 4 ? sum : Math.tanh(sum);
                 }
                 activation = next;
             }
             return activation;
         }
 
-        void trainOne(double[] input, int action, double targetValue, double learningRate) {
-            double[][] a = new double[6][];
-            a[0] = input;
-            for (int l = 0; l < 5; l++) {
-                a[l + 1] = new double[SIZES[l + 1]];
-                for (int j = 0; j < a[l + 1].length; j++) {
-                    double sum = b[l][j];
-                    for (int i = 0; i < a[l].length; i++) sum += w[l][j][i] * a[l][i];
-                    a[l + 1][j] = l == 4 ? sum : Math.tanh(sum);
+        void trainOne(double[] input, int chosenAction, double expected, double learningRate) {
+            double[][] activations = new double[6][];
+            activations[0] = input.clone();
+
+            for (int layer = 0; layer < 5; layer++) {
+                activations[layer + 1] = new double[LAYERS[layer + 1]];
+                for (int output = 0; output < LAYERS[layer + 1]; output++) {
+                    double sum = biases[layer][output];
+                    for (int in = 0; in < LAYERS[layer]; in++) {
+                        sum += weights[layer][output][in] * activations[layer][in];
+                    }
+                    activations[layer + 1][output] = layer == 4 ? sum : Math.tanh(sum);
                 }
             }
 
-            double[][] delta = new double[6][];
-            for (int l = 0; l < 6; l++) delta[l] = new double[SIZES[l]];
-            delta[5][action] = Math.max(-1.0, Math.min(1.0, a[5][action] - targetValue));
+            double[][] deltas = new double[6][];
+            for (int layer = 0; layer < 6; layer++) deltas[layer] = new double[LAYERS[layer]];
+            double error = activations[5][chosenAction] - expected;
+            deltas[5][chosenAction] = Math.max(-1.0, Math.min(1.0, error));
 
             for (int layer = 4; layer >= 1; layer--) {
-                for (int i = 0; i < SIZES[layer]; i++) {
-                    double sum = 0;
-                    for (int j = 0; j < SIZES[layer + 1]; j++) {
-                        sum += w[layer][j][i] * delta[layer + 1][j];
+                for (int inputIndex = 0; inputIndex < LAYERS[layer]; inputIndex++) {
+                    double propagated = 0.0;
+                    for (int output = 0; output < LAYERS[layer + 1]; output++) {
+                        propagated += weights[layer][output][inputIndex] * deltas[layer + 1][output];
                     }
-                    delta[layer][i] = sum * (1.0 - a[layer][i] * a[layer][i]);
+                    double activation = activations[layer][inputIndex];
+                    deltas[layer][inputIndex] = propagated * (1.0 - activation * activation);
                 }
             }
 
             adamStep++;
-            double beta1Correction = 1.0 - Math.pow(0.9, adamStep);
-            double beta2Correction = 1.0 - Math.pow(0.999, adamStep);
-            for (int l = 0; l < 5; l++) {
-                for (int j = 0; j < SIZES[l + 1]; j++) {
-                    double gradB = delta[l + 1][j];
-                    updateBias(l, j, gradB, learningRate, beta1Correction, beta2Correction);
-                    for (int i = 0; i < SIZES[l]; i++) {
-                        double grad = Math.max(-5.0, Math.min(5.0, delta[l + 1][j] * a[l][i]));
-                        updateWeight(l, j, i, grad, learningRate, beta1Correction, beta2Correction);
+            double correction1 = 1.0 - Math.pow(0.9, adamStep);
+            double correction2 = 1.0 - Math.pow(0.999, adamStep);
+
+            for (int layer = 0; layer < 5; layer++) {
+                for (int output = 0; output < LAYERS[layer + 1]; output++) {
+                    updateBias(layer, output, deltas[layer + 1][output],
+                        learningRate, correction1, correction2);
+                    for (int in = 0; in < LAYERS[layer]; in++) {
+                        double gradient = deltas[layer + 1][output] * activations[layer][in];
+                        gradient = Math.max(-5.0, Math.min(5.0, gradient));
+                        updateWeight(layer, output, in, gradient,
+                            learningRate, correction1, correction2);
                     }
                 }
             }
         }
 
-        private void updateWeight(int l, int j, int i, double g, double lr, double c1, double c2) {
-            mw[l][j][i] = 0.9 * mw[l][j][i] + 0.1 * g;
-            vw[l][j][i] = 0.999 * vw[l][j][i] + 0.001 * g * g;
-            double m = mw[l][j][i] / c1;
-            double v = vw[l][j][i] / c2;
-            w[l][j][i] -= lr * m / (Math.sqrt(v) + 1e-8);
+        private void updateWeight(int layer, int output, int input, double gradient,
+                                  double rate, double correction1, double correction2) {
+            firstMoment[layer][output][input] =
+                0.9 * firstMoment[layer][output][input] + 0.1 * gradient;
+            secondMoment[layer][output][input] =
+                0.999 * secondMoment[layer][output][input] + 0.001 * gradient * gradient;
+            double mean = firstMoment[layer][output][input] / correction1;
+            double variance = secondMoment[layer][output][input] / correction2;
+            weights[layer][output][input] -= rate * mean / (Math.sqrt(variance) + 1e-8);
         }
 
-        private void updateBias(int l, int j, double g, double lr, double c1, double c2) {
-            mb[l][j] = 0.9 * mb[l][j] + 0.1 * g;
-            vb[l][j] = 0.999 * vb[l][j] + 0.001 * g * g;
-            double m = mb[l][j] / c1;
-            double v = vb[l][j] / c2;
-            b[l][j] -= lr * m / (Math.sqrt(v) + 1e-8);
+        private void updateBias(int layer, int output, double gradient,
+                                double rate, double correction1, double correction2) {
+            biasFirstMoment[layer][output] =
+                0.9 * biasFirstMoment[layer][output] + 0.1 * gradient;
+            biasSecondMoment[layer][output] =
+                0.999 * biasSecondMoment[layer][output] + 0.001 * gradient * gradient;
+            double mean = biasFirstMoment[layer][output] / correction1;
+            double variance = biasSecondMoment[layer][output] / correction2;
+            biases[layer][output] -= rate * mean / (Math.sqrt(variance) + 1e-8);
         }
 
-        void copyFrom(QNet other) {
-            for (int l = 0; l < 5; l++) {
-                for (int j = 0; j < SIZES[l + 1]; j++) {
-                    b[l][j] = other.b[l][j];
-                    for (int i = 0; i < SIZES[l]; i++) w[l][j][i] = other.w[l][j][i];
+        void copyFrom(QNetwork other) {
+            for (int layer = 0; layer < 5; layer++) {
+                for (int output = 0; output < LAYERS[layer + 1]; output++) {
+                    biases[layer][output] = other.biases[layer][output];
+                    System.arraycopy(other.weights[layer][output], 0,
+                        weights[layer][output], 0, LAYERS[layer]);
                 }
             }
         }
@@ -379,59 +425,52 @@ public final class NeuralAgent {
             if (parent != null && !parent.exists() && !parent.mkdirs()) {
                 throw new IllegalStateException("Não foi possível criar a pasta do modelo.");
             }
-            try (DataOutputStream out = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(file)))) {
-                out.writeInt(MODEL_VERSION);
-                for (int l = 0; l < 5; l++) {
-                    for (int j = 0; j < SIZES[l + 1]; j++) out.writeDouble(b[l][j]);
-                    for (int j = 0; j < SIZES[l + 1]; j++) {
-                        for (int i = 0; i < SIZES[l]; i++) out.writeDouble(w[l][j][i]);
+            File temp = new File(file.getParentFile(), file.getName() + ".tmp");
+            try (DataOutputStream output = new DataOutputStream(
+                    new BufferedOutputStream(new FileOutputStream(temp)))) {
+                output.writeInt(MAGIC);
+                output.writeInt(MODEL_VERSION);
+                for (int layer = 0; layer < 5; layer++) {
+                    output.writeInt(LAYERS[layer]);
+                    output.writeInt(LAYERS[layer + 1]);
+                    for (int outputIndex = 0; outputIndex < LAYERS[layer + 1]; outputIndex++) {
+                        output.writeDouble(biases[layer][outputIndex]);
+                        for (int inputIndex = 0; inputIndex < LAYERS[layer]; inputIndex++) {
+                            output.writeDouble(weights[layer][outputIndex][inputIndex]);
+                        }
                     }
                 }
+                output.flush();
+            }
+
+            if (file.exists() && !file.delete()) {
+                throw new IllegalStateException("Não foi possível substituir o modelo anterior.");
+            }
+            if (!temp.renameTo(file)) {
+                throw new IllegalStateException("Não foi possível finalizar o arquivo do modelo.");
             }
         }
 
         void load(File file) throws Exception {
-            try (DataInputStream in = new DataInputStream(new BufferedInputStream(new FileInputStream(file)))) {
-                int version = in.readInt();
-                if (version == 1) {
-                    for (int l = 0; l < 5; l++) {
-                        for (int j = 0; j < SIZES[l + 1]; j++) b[l][j] = in.readDouble();
-                        for (int j = 0; j < SIZES[l + 1]; j++) {
-                            for (int i = 0; i < SIZES[l]; i++) w[l][j][i] = in.readDouble();
-                        }
-                    }
-                } else if (version == 3) {
-                    for (int l = 0; l < 5; l++) {
-                        double scale = in.readDouble();
-                        int outputs = SIZES[l + 1];
-                        int inputs = SIZES[l];
-                        int valueCount = outputs * (inputs + 1);
-                        int index = 0;
-                        while (index < valueCount) {
-                            int packed = in.readUnsignedByte();
-                            int first = packed & 0x0F;
-                            if (first >= 8) first -= 16;
-                            setQuantized(l, index++, first, scale, outputs, inputs);
-                            if (index < valueCount) {
-                                int second = (packed >>> 4) & 0x0F;
-                                if (second >= 8) second -= 16;
-                                setQuantized(l, index++, second, scale, outputs, inputs);
-                            }
-                        }
-                    }
-                } else {
-                    throw new IllegalArgumentException("Versão do modelo incompatível.");
+            try (DataInputStream input = new DataInputStream(
+                    new BufferedInputStream(new FileInputStream(file)))) {
+                if (input.readInt() != MAGIC || input.readInt() != MODEL_VERSION) {
+                    throw new IllegalArgumentException("Arquivo de modelo inválido.");
                 }
-            }
-        }
-
-        private void setQuantized(int layer, int index, int value, double scale, int outputs, int inputs) {
-            double decoded = value * scale;
-            if (index < outputs) {
-                b[layer][index] = decoded;
-            } else {
-                int weightIndex = index - outputs;
-                w[layer][weightIndex / inputs][weightIndex % inputs] = decoded;
+                for (int layer = 0; layer < 5; layer++) {
+                    int inputs = input.readInt();
+                    int outputs = input.readInt();
+                    if (inputs != LAYERS[layer] || outputs != LAYERS[layer + 1]) {
+                        throw new IllegalArgumentException("Arquitetura do modelo incompatível.");
+                    }
+                    for (int outputIndex = 0; outputIndex < outputs; outputIndex++) {
+                        biases[layer][outputIndex] = input.readDouble();
+                        for (int inputIndex = 0; inputIndex < inputs; inputIndex++) {
+                            weights[layer][outputIndex][inputIndex] = input.readDouble();
+                        }
+                    }
+                }
+                if (input.read() != -1) throw new IllegalArgumentException("Dados extras no modelo.");
             }
         }
     }
