@@ -18,8 +18,8 @@ public final class NeuralAgent {
 
     private static final int[] LAYERS = {4, 100, 100, 100, 100, 5};
     private static final int ACTIONS = 5;
-    private static final int REPLAY_CAPACITY = 4000;
-    private static final int BATCH_SIZE = 16;
+    private static final int REPLAY_CAPACITY = 2500;
+    private static final int BATCH_SIZE = 8;
     private static final double GAMMA = 0.97;
     private static final double LEARNING_RATE = 0.0002;
     private static final int MAGIC = 0x5641504B;
@@ -70,7 +70,7 @@ public final class NeuralAgent {
         try {
             QNetwork bestSnapshot = new QNetwork();
             bestSnapshot.copyFrom(online);
-            int bestScore = evaluate(30);
+            int bestScore = evaluate(12);
             int winsInWindow = 0;
             int checkpointInterval = Math.max(20, episodes / 5);
 
@@ -92,13 +92,13 @@ public final class NeuralAgent {
                     remember(new Transition(state, action, step.reward, nextState, step.done));
                     state = nextState;
 
-                    if (replaySize >= BATCH_SIZE && turns % 3 == 0) learnBatch();
+                    if (replaySize >= BATCH_SIZE && turns % 4 == 0) learnBatch();
                 }
 
                 if (arena.playerWon) winsInWindow++;
 
                 if (episode % checkpointInterval == 0 || episode == episodes) {
-                    int score = evaluate(30);
+                    int score = evaluate(12);
                     if (score >= bestScore) {
                         bestScore = score;
                         bestSnapshot.copyFrom(online);
@@ -117,8 +117,8 @@ public final class NeuralAgent {
             if (stopRequested) {
                 if (listener != null) listener.onComplete(-1, 0, modelFile);
             } else {
-                int finalWins = evaluate(100);
-                if (listener != null) listener.onComplete(finalWins, 100, modelFile);
+                int finalWins = evaluate(50);
+                if (listener != null) listener.onComplete(finalWins, 50, modelFile);
             }
         } catch (Exception error) {
             if (listener != null) listener.onError(error);
