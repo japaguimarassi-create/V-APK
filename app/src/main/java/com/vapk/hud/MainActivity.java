@@ -1,7 +1,9 @@
 package com.vapk.hud;
 
 import android.app.Activity;
+import android.content.ComponentName;
 import android.content.Intent;
+import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.net.Uri;
@@ -9,7 +11,6 @@ import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.text.InputType;
-import android.util.Base64;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
@@ -21,26 +22,25 @@ import android.widget.Toast;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.Locale;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class MainActivity extends Activity {
-    public static final String EXTRA_HUD_START = "com.vapk.hud.HUD_START";
-    private static final int REQUEST_OPEN = 4101;
-    private static final int REQUEST_SAVE = 4102;
-    private static final int DEFAULT_TRAINING_EPISODES = 120;
-    private static final int MAX_FILE_BYTES = 100_000;
+    private static final int REQUEST_OPEN = 6101;
+    private static final int REQUEST_SAVE = 6102;
+    private static final int TRAINING_EPISODES = 150;
 
     private EditText editor;
     private TextView status;
     private NeuralAgent agent;
-    private ScriptEngine.Plan pendingPlan;
-    private Thread scriptThread;
-    private boolean training;
-    private volatile boolean scriptRunning;
-    private volatile boolean aiActive;
     private File modelFile;
+    private final AtomicBoolean cancelScript = new AtomicBoolean(false);
+    private volatile boolean training;
+    private volatile boolean scriptRunning;
 
     private int dp(float value) {
         return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
@@ -49,124 +49,100 @@ public final class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        modelFile = new File(getFilesDir(), "model_4x100.bin");
-        installSeedModel();
+        modelFile = new File(getFilesDir(), "vapk-agent-4x100.bin");
         agent = new NeuralAgent(modelFile);
-        buildInterface();
-        String savedScript = getPreferences(MODE_PRIVATE).getString("pending_script", null);
-        if (savedScript != null) editor.setText(savedScript);
-        prepareScript();
-
-        if (!modelFile.isFile()) startTraining();
-        handleHudIntent(getIntent());
+        buildUi();
     }
 
-    @Override
-    protected void onNewIntent(Intent intent) {
-        super.onNewIntent(intent);
-        setIntent(intent);
-        handleHudIntent(intent);
-    }
-
-    private void handleHudIntent(Intent intent) {
-        if (intent != null && intent.getBooleanExtra(EXTRA_HUD_START, false)) {
-            intent.removeExtra(EXTRA_HUD_START);
-            executePreparedScript();
-        }
-    }
-
-
-    private void installSeedModel() {
-        if (modelFile.exists()) return;
-        try (InputStream input = getAssets().open("pretrained_4x100.b64");
-             ByteArrayOutputStream output = new ByteArrayOutputStream()) {
-            byte[] buffer = new byte[4096];
-            int count;
-            while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
-            byte[] decoded = Base64.decode(output.toByteArray(), Base64.DEFAULT);
-            try (java.io.FileOutputStream model = new java.io.FileOutputStream(modelFile)) {
-                model.write(decoded);
-                model.flush();
-            }
-        } catch (Exception ignored) {
-        }
-    }
-
-    private void buildInterface() {
+    private void buildUi() {
         LinearLayout page = new LinearLayout(this);
         page.setOrientation(LinearLayout.VERTICAL);
-        page.setPadding(dp(16), dp(14), dp(16), dp(14));
+        page.setPadding(dp(15), dp(15), dp(15), dp(18));
         page.setBackgroundColor(Color.rgb(8, 15, 27));
 
         TextView heading = new TextView(this);
-        heading.setText("V-APK  /  NEURAL HUD");
+        heading.setText("V-APK");
         heading.setTextColor(Color.WHITE);
-        heading.setTextSize(21);
+        heading.setTextSize(25);
         heading.setTypeface(null, Typeface.BOLD);
         page.addView(heading);
 
-        TextView subheading = new TextView(this);
-        subheading.setText("Java 17 • HUD flutuante • Aprendizado por reforço 4×100");
-        subheading.setTextColor(Color.rgb(146, 170, 198));
-        subheading.setTextSize(12);
-        subheading.setPadding(0, dp(4), 0, dp(14));
-        page.addView(subheading);
+        TextView subtitle = new TextView(this);
+        subtitle.setText("JAVA HUD  •  CROSS-APP AUTOMATION  •  NEURAL 4×100");
+        subtitle.setTextColor(Color.rgb(136, 174, 213));
+        subtitle.setTextSize(10);
+        subtitle.setPadding(0, dp(3), 0, dp(13));
+        page.addView(subtitle);
 
-        LinearLayout rowOne = row(page);
-        addButton(rowOne, "Abrir arquivo", v -> openFile());
-        addButton(rowOne, "Salvar como", v -> saveFile());
+        LinearLayout first = row(page);
+        addButton(first, "Abrir arquivo", v -> openFile());
+        addButton(first, "Salvar como", v -> saveFile());
 
-        LinearLayout rowTwo = row(page);
-        addButton(rowTwo, "Mostrar HUD", v -> showHud());
-        addButton(rowTwo, "Analisar / Esperar", v -> prepareScript());
+        LinearLayout second = row(page);
+        addButton(second, "Ativar HUD", v -> showHud());
+        addButton(second, "Acessibilidade", v -> openAccessibilitySettings());
 
-        LinearLayout rowThree = row(page);
-        addButton(rowThree, "Treinar IA", v -> startTraining());
-        addButton(rowThree, "Parar treino", v -> stopTraining());
+        LinearLayout third = row(page);
+        addButton(third, "Executar script", v -> runScript());
+        addButton(third, "Parar script", v -> stopScript());
 
-        LinearLayout rowFour = row(page);
-        addButton(rowFour, "Parar arquivo", v -> stopScript());
+        LinearLayout fourth = row(page);
+        addButton(fourth, "Treinar IA", v -> startTraining());
+        addButton(fourth, "Parar treino", v -> stopTraining());
 
         TextView editorLabel = new TextView(this);
-        editorLabel.setText("ARQUIVO JAVA  (.java / .txt / .vapk)");
-        editorLabel.setTextColor(Color.rgb(125, 190, 255));
+        editorLabel.setText("SCRIPT EDITOR");
+        editorLabel.setTextColor(Color.rgb(113, 187, 255));
         editorLabel.setTextSize(12);
         editorLabel.setTypeface(null, Typeface.BOLD);
-        editorLabel.setPadding(0, dp(14), 0, dp(7));
+        editorLabel.setPadding(0, dp(13), 0, dp(7));
         page.addView(editorLabel);
 
         editor = new EditText(this);
-        editor.setTextColor(Color.rgb(227, 237, 249));
-        editor.setHintTextColor(Color.rgb(110, 130, 153));
-        editor.setHint("Cole aqui os comandos da API HUD...");
-        editor.setTextSize(13);
+        editor.setTextColor(Color.rgb(231, 239, 249));
+        editor.setHintTextColor(Color.rgb(113, 132, 154));
+        editor.setHint("Escreva ou abra um arquivo Java...");
+        editor.setTextSize(12);
         editor.setTypeface(Typeface.MONOSPACE);
         editor.setGravity(Gravity.TOP | Gravity.START);
-        editor.setInputType(InputType.TYPE_CLASS_TEXT
-            | InputType.TYPE_TEXT_FLAG_MULTI_LINE
+        editor.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE
             | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
         editor.setSingleLine(false);
-        editor.setMinLines(14);
-        editor.setPadding(dp(12), dp(12), dp(12), dp(12));
+        editor.setMinLines(16);
+        editor.setPadding(dp(11), dp(11), dp(11), dp(11));
         editor.setBackgroundColor(Color.rgb(16, 27, 44));
         page.addView(editor, new LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, dp(290)));
+            LinearLayout.LayoutParams.MATCH_PARENT, dp(330)));
 
-        TextView api = new TextView(this);
-        api.setText("API permitida: HUD.setTitle(\"texto\"); HUD.setText(\"texto\");\n"
-            + "HUD.log(\"texto\"); HUD.setColor(\"#123456\");\n"
-            + "HUD.setVisible(true); HUD.waitMs(250);\n"
-            + "O arquivo é lido e validado primeiro. A execução só começa pelo botão no HUD.");
-        api.setTextColor(Color.rgb(145, 165, 188));
-        api.setTextSize(11);
-        api.setPadding(0, dp(8), 0, dp(8));
-        page.addView(api);
+        TextView help = new TextView(this);
+        help.setText(
+            "HUD.setTitle(\"V-APK\");\n"
+            + "HUD.setText(\"Olá\");\n"
+            + "HUD.log(\"Executando\");\n"
+            + "HUD.setColor(\"#102030\");\n"
+            + "APP.tapText(\"Continuar\");\n"
+            + "APP.typeText(\"texto\");\n"
+            + "APP.scroll(\"forward\");\n"
+            + "APP.back();\n"
+            + "APP.waitMs(300);"
+        );
+        help.setTextColor(Color.rgb(146, 167, 190));
+        help.setTextSize(11);
+        help.setTypeface(Typeface.MONOSPACE);
+        help.setPadding(0, dp(9), 0, dp(8));
+        page.addView(help);
+
+        TextView warning = new TextView(this);
+        warning.setText("Scripts APP controlam a interface visível por Acessibilidade. "
+            + "Não há injeção de código em outros processos; campos de senha não são preenchidos.");
+        warning.setTextColor(Color.rgb(218, 180, 115));
+        warning.setTextSize(11);
+        page.addView(warning);
 
         status = new TextView(this);
-        status.setText("Inicializando...");
-        status.setTextColor(Color.rgb(125, 210, 170));
+        status.setTextColor(Color.rgb(130, 215, 174));
         status.setTextSize(12);
-        status.setPadding(0, dp(8), 0, dp(8));
+        status.setPadding(0, dp(10), 0, dp(8));
         page.addView(status);
 
         ScrollView scroll = new ScrollView(this);
@@ -178,135 +154,134 @@ public final class MainActivity extends Activity {
             "public class Example {\n"
             + "    public static void run() {\n"
             + "        HUD.setTitle(\"V-APK / Java\");\n"
-            + "        HUD.setText(\"Agente neural pronto.\");\n"
+            + "        HUD.setText(\"HUD pronta\");\n"
             + "        HUD.log(\"Script iniciado\");\n"
-            + "        HUD.setColor(\"#0D1627\");\n"
-            + "        HUD.waitMs(250);\n"
-            + "        HUD.log(\"Comandos finalizados\");\n"
+            + "        APP.waitMs(300);\n"
+            + "        APP.tapText(\"Continuar\");\n"
             + "    }\n"
             + "}\n"
         );
+        refreshStatus();
     }
 
-    private LinearLayout row(LinearLayout parent) {
+    private LinearLayout row(LinearLayout page) {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setPadding(0, dp(4), 0, dp(4));
-        parent.addView(row);
+        row.setPadding(0, dp(3), 0, dp(3));
+        page.addView(row);
         return row;
     }
 
-    private void addButton(LinearLayout row, String text, View.OnClickListener listener) {
+    private void addButton(LinearLayout row, String label, View.OnClickListener click) {
         Button button = new Button(this);
-        button.setText(text);
-        button.setTextSize(11);
+        button.setText(label);
+        button.setTextSize(10);
         button.setAllCaps(false);
         button.setTextColor(Color.WHITE);
-        button.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(26, 79, 126)));
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(46), 1);
+        button.setBackgroundTintList(ColorStateList.valueOf(Color.rgb(27, 79, 125)));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(45), 1);
         params.setMargins(dp(3), 0, dp(3), 0);
         row.addView(button, params);
-        button.setOnClickListener(listener);
+        button.setOnClickListener(click);
     }
 
     private boolean hasOverlayPermission() {
         return Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(this);
     }
 
+    private boolean isAccessibilityEnabled() {
+        String enabled = Settings.Secure.getString(
+            getContentResolver(), Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        );
+        if (enabled == null) return false;
+        String component = new ComponentName(this, AutomationAccessibilityService.class).flattenToString();
+        for (String item : enabled.split(":")) {
+            if (component.equalsIgnoreCase(item)) return true;
+        }
+        return false;
+    }
+
+    private void refreshStatus() {
+        setStatus("HUD: " + (hasOverlayPermission() ? "permitida" : "aguardando permissão")
+            + "  •  Acessibilidade: " + (isAccessibilityEnabled() ? "ativa" : "desativada")
+            + "  •  IA: " + (modelFile.exists() ? "modelo salvo" : "inicializando"));
+    }
+
     private void showHud() {
         if (!hasOverlayPermission()) {
-            Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                Uri.parse("package:" + getPackageName()));
-            startActivity(intent);
-            Toast.makeText(this, "Autorize a sobreposição e toque em Mostrar HUD novamente.",
-                Toast.LENGTH_LONG).show();
+            startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:" + getPackageName())));
+            toast("Permita exibir sobre outros apps e toque em Ativar HUD novamente.");
             return;
         }
         startService(new Intent(this, HudOverlayService.class));
-        setStatus("HUD iniciada. Use o botão LIGAR IA + EXECUTAR.");
+        setStatus("HUD flutuante iniciada.");
     }
 
-    private void prepareScript() {
-        try {
-            pendingPlan = ScriptEngine.analyze(editor.getText().toString());
-            getPreferences(MODE_PRIVATE).edit()
-                    .putString("pending_script", editor.getText().toString())
-                    .apply();
-            aiActive = false;
-            setStatus("ARQUIVO LIDO: " + pendingPlan.summary + " • IA EM ESPERA");
-            HudOverlayService.command("setTitle", "V-APK | IA EM ESPERA");
-            HudOverlayService.command("setStatus", "Arquivo analisado. Aguardando botão de ativação.");
-        } catch (Exception error) {
-            pendingPlan = null;
-            getPreferences(MODE_PRIVATE).edit().remove("pending_script").apply();
-            setStatus("ANÁLISE RECUSADA: " + error.getMessage());
-            HudOverlayService.command("setStatus", "Arquivo inválido. Nada foi executado.");
-        }
+    private void openAccessibilitySettings() {
+        startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
+        toast("Ative V-APK Automation em Serviços instalados.");
     }
 
-    private void executePreparedScript() {
+    private void runScript() {
         if (scriptRunning) {
-            setStatus("Já existe um arquivo em execução.");
+            setStatus("Já existe um script em execução.");
             return;
-        }
-        if (pendingPlan == null) {
-            prepareScript();
-            if (pendingPlan == null) {
-                Toast.makeText(this, "Carregue ou corrija um arquivo antes de executar.",
-                    Toast.LENGTH_LONG).show();
-                return;
-            }
         }
         if (!hasOverlayPermission()) {
             showHud();
             return;
         }
 
-        ScriptEngine.Plan plan = pendingPlan;
+        startService(new Intent(this, HudOverlayService.class));
+        cancelScript.set(false);
         scriptRunning = true;
-        aiActive = false;
-        setStatus("HUD acionada. Aguardando o evento de início do arquivo...");
-        scriptThread = new Thread(() -> {
-            try {
-                String result = ScriptEngine.execute(plan, HudOverlayService::command, () -> {
-                    aiActive = true;
-                    HudOverlayService.command("setTitle", "V-APK | IA ATIVA");
-                    HudOverlayService.command("setStatus", "SCRIPT_STARTED detectado • IA ligada");
-                    runOnUiThread(() -> setStatus("INÍCIO DO ARQUIVO DETECTADO — IA ATIVA"));
-                });
+        String source = editor.getText().toString();
+        setStatus("Validando script...");
 
-                runOnUiThread(() -> {
-                    aiActive = false;
-                    HudOverlayService.command("setTitle", "V-APK | IA EM ESPERA");
-                    HudOverlayService.command("setStatus", "Arquivo concluído. Aguardando novo acionamento.");
-                    setStatus(result + " • IA voltou ao modo de espera.");
-                });
-            } catch (InterruptedException error) {
-                Thread.currentThread().interrupt();
-                runOnUiThread(() -> {
-                    aiActive = false;
-                    HudOverlayService.command("setTitle", "V-APK | IA EM ESPERA");
-                    HudOverlayService.command("setStatus", "Execução cancelada.");
-                    setStatus("Execução interrompida.");
-                });
+        new Thread(() -> {
+            try {
+                ScriptEngine.Host host = new ScriptEngine.Host() {
+                    @Override
+                    public void hud(String command, String value) {
+                        HudOverlayService.command(command, value);
+                    }
+
+                    @Override
+                    public String app(String command, String value) throws Exception {
+                        if (!isAccessibilityEnabled()) {
+                            throw new IllegalStateException(
+                                "Ative Acessibilidade antes de executar comandos APP."
+                            );
+                        }
+                        String result = AutomationAccessibilityService.executeCommand(command, value);
+                        HudOverlayService.command("log", result);
+                        return result;
+                    }
+
+                    @Override
+                    public boolean isCancelled() {
+                        return cancelScript.get();
+                    }
+                };
+
+                String result = new ScriptEngine(host).execute(source);
+                runOnUiThread(() -> setStatus(result));
             } catch (Exception error) {
-                runOnUiThread(() -> setStatus("Falha na execução: " + error.getMessage()));
+                runOnUiThread(() -> setStatus("Script encerrado: " + error.getMessage()));
             } finally {
                 scriptRunning = false;
-                scriptThread = null;
             }
-        }, "VAPK-Script");
-        scriptThread.start();
+        }, "VAPK-Script").start();
     }
 
     private void stopScript() {
-        Thread current = scriptThread;
-        if (current != null) current.interrupt();
-        scriptRunning = false;
-        aiActive = false;
-        HudOverlayService.command("setTitle", "V-APK | IA EM ESPERA");
-        HudOverlayService.command("setStatus", "Execução parada pelo usuário.");
-        setStatus("Execução parada.");
+        if (!scriptRunning) {
+            setStatus("Nenhum script está em execução.");
+            return;
+        }
+        cancelScript.set(true);
+        setStatus("Cancelamento solicitado.");
     }
 
     private void openFile() {
@@ -320,7 +295,7 @@ public final class MainActivity extends Activity {
         Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType("text/plain");
-        intent.putExtra(Intent.EXTRA_TITLE, "vapk-script.java");
+        intent.putExtra(Intent.EXTRA_TITLE, "vapk-automation.java");
         startActivityForResult(intent, REQUEST_SAVE);
     }
 
@@ -338,22 +313,19 @@ public final class MainActivity extends Activity {
                 int count;
                 while ((count = input.read(buffer)) != -1) {
                     output.write(buffer, 0, count);
-                    if (output.size() > MAX_FILE_BYTES) {
-                        throw new IllegalArgumentException("Limite de 100 KB excedido.");
-                    }
+                    if (output.size() > 100_000) throw new IllegalArgumentException("Limite de 100 KB excedido.");
                 }
                 editor.setText(output.toString("UTF-8"));
-                prepareScript();
+                setStatus("Arquivo carregado.");
             } catch (Exception error) {
-                pendingPlan = null;
-                setStatus("Falha ao abrir/analisar: " + error.getMessage());
+                setStatus("Falha ao abrir: " + error.getMessage());
             }
         } else if (requestCode == REQUEST_SAVE) {
             try (OutputStream output = getContentResolver().openOutputStream(uri)) {
                 if (output == null) throw new IllegalStateException("Não foi possível salvar o arquivo.");
                 output.write(editor.getText().toString().getBytes(StandardCharsets.UTF_8));
                 output.flush();
-                prepareScript();
+                setStatus("Arquivo salvo.");
             } catch (Exception error) {
                 setStatus("Falha ao salvar: " + error.getMessage());
             }
@@ -366,34 +338,29 @@ public final class MainActivity extends Activity {
             return;
         }
         training = true;
-        setStatus("Treinando rede 4×100 contra inimigos simulados...");
-        new Thread(() -> agent.train(modelFile, DEFAULT_TRAINING_EPISODES, new NeuralAgent.Listener() {
+        setStatus("Treinando agente 4×100 contra inimigos simulados...");
+        new Thread(() -> agent.train(modelFile, TRAINING_EPISODES, new NeuralAgent.Listener() {
             @Override
             public void onProgress(int episode, int total, int recentWins, double epsilon) {
-                runOnUiThread(() -> setStatus("Treino " + episode + "/" + total
-                    + " • vitórias recentes: " + recentWins
-                    + " • exploração: " + String.format(java.util.Locale.US, "%.2f", epsilon)));
+                runOnUiThread(() -> setStatus("Episódio " + episode + "/" + total
+                    + "  •  vitórias recentes: " + recentWins
+                    + "  •  exploração: " + String.format(Locale.US, "%.2f", epsilon)));
             }
 
             @Override
-            public void onComplete(int wins, int games, File file) {
+            public void onComplete(int wins, int games, File saved) {
+                training = false;
                 runOnUiThread(() -> {
-                    training = false;
-                    if (games == 0) {
-                        setStatus("Treino interrompido. Pesos parciais salvos.");
-                    } else {
-                        setStatus("Treinamento concluído. Avaliação: " + wins + "/" + games
-                            + " vitórias. Modelo salvo.");
-                    }
+                    if (games == 0) setStatus("Treino parado. Pesos parciais salvos.");
+                    else setStatus("Avaliação do simulador: " + wins + "/" + games
+                        + " vitórias. Modelo salvo no dispositivo.");
                 });
             }
 
             @Override
             public void onError(Exception error) {
-                runOnUiThread(() -> {
-                    training = false;
-                    setStatus("Erro no treinamento: " + error.getMessage());
-                });
+                training = false;
+                runOnUiThread(() -> setStatus("Falha no treino: " + error.getMessage()));
             }
         })).start();
     }
@@ -404,17 +371,27 @@ public final class MainActivity extends Activity {
             return;
         }
         agent.stop();
-        setStatus("Solicitando parada segura e salvamento dos pesos...");
+        setStatus("Parada solicitada; salvando o modelo...");
     }
 
     private void setStatus(String message) {
         if (status != null) status.setText(message);
     }
 
+    private void toast(String message) {
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        refreshStatus();
+    }
+
     @Override
     protected void onDestroy() {
+        cancelScript.set(true);
         if (training && agent != null) agent.stop();
-        if (scriptThread != null) scriptThread.interrupt();
         super.onDestroy();
     }
 }
