@@ -249,6 +249,7 @@ public final class HudOverlayService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        if (panel != null) panel.setVisibility(View.VISIBLE);
         return START_NOT_STICKY;
     }
 
