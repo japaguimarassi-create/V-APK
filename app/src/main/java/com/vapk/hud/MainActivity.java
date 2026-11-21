@@ -53,6 +53,8 @@ public final class MainActivity extends Activity {
         installSeedModel();
         agent = new NeuralAgent(modelFile);
         buildInterface();
+        String savedScript = getPreferences(MODE_PRIVATE).getString("pending_script", null);
+        if (savedScript != null) editor.setText(savedScript);
         prepareScript();
 
         if (!modelFile.isFile()) startTraining();
@@ -227,12 +229,16 @@ public final class MainActivity extends Activity {
     private void prepareScript() {
         try {
             pendingPlan = ScriptEngine.analyze(editor.getText().toString());
+            getPreferences(MODE_PRIVATE).edit()
+                    .putString("pending_script", editor.getText().toString())
+                    .apply();
             aiActive = false;
             setStatus("ARQUIVO LIDO: " + pendingPlan.summary + " • IA EM ESPERA");
             HudOverlayService.command("setTitle", "V-APK | IA EM ESPERA");
             HudOverlayService.command("setStatus", "Arquivo analisado. Aguardando botão de ativação.");
         } catch (Exception error) {
             pendingPlan = null;
+            getPreferences(MODE_PRIVATE).edit().remove("pending_script").apply();
             setStatus("ANÁLISE RECUSADA: " + error.getMessage());
             HudOverlayService.command("setStatus", "Arquivo inválido. Nada foi executado.");
         }
