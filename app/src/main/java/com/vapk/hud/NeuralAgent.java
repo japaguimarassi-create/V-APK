@@ -411,11 +411,18 @@ public final class NeuralAgent {
         }
 
         void copyFrom(QNetwork other) {
+            adamStep = other.adamStep;
             for (int layer = 0; layer < 5; layer++) {
                 for (int output = 0; output < LAYERS[layer + 1]; output++) {
                     biases[layer][output] = other.biases[layer][output];
+                    biasFirstMoment[layer][output] = other.biasFirstMoment[layer][output];
+                    biasSecondMoment[layer][output] = other.biasSecondMoment[layer][output];
                     System.arraycopy(other.weights[layer][output], 0,
                         weights[layer][output], 0, LAYERS[layer]);
+                    System.arraycopy(other.firstMoment[layer][output], 0,
+                        firstMoment[layer][output], 0, LAYERS[layer]);
+                    System.arraycopy(other.secondMoment[layer][output], 0,
+                        secondMoment[layer][output], 0, LAYERS[layer]);
                 }
             }
         }
