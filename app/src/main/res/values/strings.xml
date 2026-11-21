@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">V-APK</string>
+    <string name="accessibility_description">Permite que scripts iniciados pelo usuário controlem ações visíveis da interface, como tocar em texto, rolar e preencher campos que não sejam senhas. O serviço não grava nem transmite eventos.</string>
+</resources>
