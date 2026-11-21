@@ -36,15 +36,16 @@ public final class NeuralAgent {
     private volatile boolean stopRequested;
 
     public NeuralAgent(File modelFile) {
+        boolean loaded = false;
         if (modelFile != null && modelFile.isFile()) {
             try {
                 online.load(modelFile);
+                loaded = true;
             } catch (Exception ignored) {
-                online.reset(new Random(42));
+                loaded = false;
             }
-        } else {
-            online.reset(new Random(42));
         }
+        if (!loaded) online.reset(new Random(42));
         target.copyFrom(online);
     }
 
@@ -68,6 +69,9 @@ public final class NeuralAgent {
     public void train(File modelFile, int episodes, Listener listener) {
         stopRequested = false;
         try {
+            QNet bestSnapshot = new QNet();
+            bestSnapshot.copyFrom(online);
+            int bestScore = evaluate(100);
             int winsInWindow = 0;
             for (int episode = 1; episode <= episodes && !stopRequested; episode++) {
                 double epsilon = Math.max(0.05, 1.0 - 0.95 * (episode - 1) / Math.max(1.0, episodes - 1.0));
@@ -94,19 +98,22 @@ public final class NeuralAgent {
                 }
 
                 if (arena.playerWon) winsInWindow++;
-                if (episode % 10 == 0 || episode == episodes) {
+                if (episode % 20 == 0 || episode == episodes) {
+                    int score = evaluate(100);
+                    if (score >= bestScore) {
+                        bestScore = score;
+                        bestSnapshot.copyFrom(online);
+                    }
                     if (listener != null) listener.onProgress(episode, episodes, winsInWindow, epsilon);
                     winsInWindow = 0;
                 }
             }
 
-            if (!stopRequested) {
-                int wins = evaluate(100);
-                if (modelFile != null) online.save(modelFile);
-                if (listener != null) listener.onComplete(wins, 100, modelFile);
-            } else {
-                if (modelFile != null) online.save(modelFile);
-                if (listener != null) listener.onComplete(-1, 0, modelFile);
+            online.copyFrom(bestSnapshot);
+            if (modelFile != null) online.save(modelFile);
+            if (listener != null) {
+                if (stopRequested) listener.onComplete(-1, 0, modelFile);
+                else listener.onComplete(bestScore, 100, modelFile);
             }
         } catch (Exception error) {
             if (listener != null) listener.onError(error);
@@ -385,13 +392,46 @@ public final class NeuralAgent {
 
         void load(File file) throws Exception {
             try (DataInputStream in = new DataInputStream(new BufferedInputStream(new FileInputStream(file)))) {
-                if (in.readInt() != MODEL_VERSION) throw new IllegalArgumentException("Versão do modelo incompatível.");
-                for (int l = 0; l < 5; l++) {
-                    for (int j = 0; j < SIZES[l + 1]; j++) b[l][j] = in.readDouble();
-                    for (int j = 0; j < SIZES[l + 1]; j++) {
-                        for (int i = 0; i < SIZES[l]; i++) w[l][j][i] = in.readDouble();
+                int version = in.readInt();
+                if (version == 1) {
+                    for (int l = 0; l < 5; l++) {
+                        for (int j = 0; j < SIZES[l + 1]; j++) b[l][j] = in.readDouble();
+                        for (int j = 0; j < SIZES[l + 1]; j++) {
+                            for (int i = 0; i < SIZES[l]; i++) w[l][j][i] = in.readDouble();
+                        }
                     }
+                } else if (version == 3) {
+                    for (int l = 0; l < 5; l++) {
+                        double scale = in.readDouble();
+                        int outputs = SIZES[l + 1];
+                        int inputs = SIZES[l];
+                        int valueCount = outputs * (inputs + 1);
+                        int index = 0;
+                        while (index < valueCount) {
+                            int packed = in.readUnsignedByte();
+                            int first = packed & 0x0F;
+                            if (first >= 8) first -= 16;
+                            setQuantized(l, index++, first, scale, outputs, inputs);
+                            if (index < valueCount) {
+                                int second = (packed >>> 4) & 0x0F;
+                                if (second >= 8) second -= 16;
+                                setQuantized(l, index++, second, scale, outputs, inputs);
+                            }
+                        }
+                    }
+                } else {
+                    throw new IllegalArgumentException("Versão do modelo incompatível.");
                 }
+            }
+        }
+
+        private void setQuantized(int layer, int index, int value, double scale, int outputs, int inputs) {
+            double decoded = value * scale;
+            if (index < outputs) {
+                b[layer][index] = decoded;
+            } else {
+                int weightIndex = index - outputs;
+                w[layer][weightIndex / inputs][weightIndex % inputs] = decoded;
             }
         }
     }
