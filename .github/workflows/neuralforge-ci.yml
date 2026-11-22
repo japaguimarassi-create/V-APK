@@ -1,0 +1,36 @@
+name: NeuralForge grouped-training CI
+
+on:
+  push:
+    branches:
+      - "neuralforge/**"
+    paths:
+      - "experiments/neuralforge/**"
+      - ".github/workflows/neuralforge-ci.yml"
+  pull_request:
+    paths:
+      - "experiments/neuralforge/**"
+      - ".github/workflows/neuralforge-ci.yml"
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: experiments/neuralforge/requirements.txt
+      - name: Build C++ statistics library
+        run: |
+          cmake -S experiments/neuralforge -B experiments/neuralforge/build -DCMAKE_BUILD_TYPE=Release
+          cmake --build experiments/neuralforge/build --config Release -j2
+      - name: Install Python dependencies
+        run: python -m pip install -r experiments/neuralforge/requirements.txt
+      - name: Run tests
+        env:
+          PYTHONPATH: experiments/neuralforge/python
+          NEURALFORGE_NATIVE_LIB: experiments/neuralforge/build/libresponse_stats.so
+        run: pytest -q experiments/neuralforge/tests
