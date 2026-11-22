@@ -30,6 +30,12 @@ The project does not train 64 disconnected networks on unrelated random inputs. 
 
 This makes the learned parameters compatible because every group is optimized in the context of the same end-to-end path. The response bank is an audit record of the actual activations passed between groups, not a substitute for training data.
 
+## Hybrid supervised + reinforcement training
+
+The default objective combines supervised MSE with a REINFORCE policy term. For each sample, the model samples an action from its output distribution. It receives reward +1 when the sampled action matches the target vector's highest-scoring index and -0.2 otherwise. The combined loss is MSE plus the policy loss weighted by reinforcement-weight (default 0.2).
+
+This is a label-derived contextual-bandit signal. It preserves the requested hybrid training behavior for a labeled dataset, but it is not a substitute for interacting with a real simulator or environment that returns action-dependent rewards. Set reinforcement-weight to zero to disable the policy term.
+
 ## Memory and compute limits
 
 Group-wise optimization reduces the amount of gradient state held at once and activation checkpointing recomputes frozen suffix groups during the backward pass. It does **not** remove the need to hold the full 8+ GiB model weights in memory in this implementation. The full model also needs additional memory for framework overhead, data, gradients for the active group, and the runtime.

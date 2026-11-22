@@ -10,10 +10,7 @@ sys.path.insert(0, str(PROJECT / "python"))
 from neuralforge.config import NetworkConfig
 from neuralforge.model import GroupedDenseNetwork
 from neuralforge.native import calculate_stats, load_native_library
-from neuralforge.response_bank import (
-    RunningStats,
-    collect_response_bank,
-)
+from neuralforge.response_bank import RunningStats, collect_response_bank
 from neuralforge.trainer import train_groupwise
 
 
@@ -50,6 +47,7 @@ def test_groupwise_training_saves_each_group(tmp_path):
     )
 
     assert len(history["groups"]) == 2
+    assert all("policy_loss" in item for item in history["groups"])
     assert (tmp_path / "groups" / "group_0000.pt").exists()
     assert (tmp_path / "groups" / "group_0001.pt").exists()
     assert (tmp_path / "head.pt").exists()
@@ -91,3 +89,15 @@ def test_response_collection_keeps_boundary_vectors():
     assert vectors["group_0000"].shape == (3, 8)
     assert vectors["group_0001"].shape == (3, 8)
     assert np.isfinite(vectors["group_0000"]).all()
+
+
+def test_hybrid_objective_reports_both_learning_signals():
+    from neuralforge.trainer import _hybrid_objective
+
+    logits = torch.tensor([[2.0, 0.0], [0.0, 2.0]], requires_grad=True)
+    targets = torch.tensor([[1.0, 0.0], [0.0, 1.0]])
+    loss, metrics = _hybrid_objective(logits, targets, 0.2)
+    loss.backward()
+    assert torch.isfinite(loss)
+    assert metrics["supervised"] >= 0.0
+    assert np.isfinite(metrics["policy"])

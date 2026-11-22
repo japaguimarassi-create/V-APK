@@ -34,6 +34,7 @@ def build_parser():
     parser.add_argument("--joint-epochs", type=int, default=0)
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--learning-rate", type=float, default=1e-4)
+    parser.add_argument("--reinforcement-weight", type=float, default=0.2)
     parser.add_argument("--checkpoint-dir", default="checkpoints")
     parser.add_argument("--device", default="auto")
     parser.add_argument("--native-lib")
@@ -53,6 +54,8 @@ def main(argv=None):
         layers_per_group=args.layers_per_group,
     )
     config.validate()
+    if config.input_size != config.width:
+        raise SystemExit("This dense stack currently requires input-size == width.")
     print(json.dumps(config.summary(), indent=2))
 
     if not args.execute:
@@ -65,8 +68,8 @@ def main(argv=None):
         raise SystemExit("--data is required when --execute is supplied.")
     if args.batch_size < 1 or args.group_cycles < 1 or args.group_epochs < 1:
         raise SystemExit("Batch size, group cycles, and group epochs must be positive.")
-    if args.response_samples < 0:
-        raise SystemExit("--response-samples cannot be negative.")
+    if args.response_samples < 0 or args.reinforcement_weight < 0:
+        raise SystemExit("Response sample count and reinforcement weight cannot be negative.")
 
     dataset = np.load(args.data, allow_pickle=False)
     if args.x_key not in dataset or args.y_key not in dataset:
@@ -109,6 +112,7 @@ def main(argv=None):
         learning_rate=args.learning_rate,
         device=device,
         joint_epochs=args.joint_epochs,
+        reinforcement_weight=args.reinforcement_weight,
     )
 
     native_library = load_native_library(args.native_lib)
