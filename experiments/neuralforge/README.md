@@ -58,7 +58,8 @@ The output is build/libresponse_stats.so on Linux, build/libresponse_stats.dylib
 ## Install Python dependencies
 
 ```bash
-python -m pip install -r requirements.txt
+python -m pip install numpy pytest
+python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
 ```
 
 Set PYTHONPATH=python when running commands from this directory.
