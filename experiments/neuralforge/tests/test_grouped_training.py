@@ -48,6 +48,7 @@ def test_groupwise_training_saves_each_group(tmp_path):
 
     assert len(history["groups"]) == 2
     assert all("policy_loss" in item for item in history["groups"])
+    assert "policy_loss" in history["head_final"]
     assert (tmp_path / "groups" / "group_0000.pt").exists()
     assert (tmp_path / "groups" / "group_0001.pt").exists()
     assert (tmp_path / "head.pt").exists()

@@ -26,7 +26,7 @@ The project does not train 64 disconnected networks on unrelated random inputs. 
 6. The first 128 responses per group are also retained as actual activation vectors in response_samples.npz (configurable with response-samples).
 7. Every group boundary includes a learned per-feature scale and offset (LayerNorm). It keeps the interface between groups numerically organized while remaining trainable in that group's stage.
 8. All group checkpoints and the head are assembled into assembled.pt, with manifest.json describing the parameter layout.
-9. Optional joint fine-tuning can then update all groups together.
+9. The output head is trained once more after the final group update, recalibrating the assembled representation.\n10. Optional joint fine-tuning can then update all groups together.
 
 This makes the learned parameters compatible because every group is optimized in the context of the same end-to-end path. The response bank is an audit record of the actual activations passed between groups, not a substitute for training data.
 

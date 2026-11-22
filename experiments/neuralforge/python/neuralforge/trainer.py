@@ -154,6 +154,11 @@ def train_groupwise(
                 "policy_loss": sum(policy_losses) / denominator,
             })
 
+    history["head_final"] = _train_output_head(
+        model, inputs, targets, batch_size, device, learning_rate,
+        reinforcement_weight, checkpoint_dir
+    )
+
     if joint_epochs > 0:
         _set_all_trainable(model, True)
         optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate * 0.1)
