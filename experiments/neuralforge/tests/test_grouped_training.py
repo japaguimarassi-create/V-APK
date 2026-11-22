@@ -10,7 +10,10 @@ sys.path.insert(0, str(PROJECT / "python"))
 from neuralforge.config import NetworkConfig
 from neuralforge.model import GroupedDenseNetwork
 from neuralforge.native import calculate_stats, load_native_library
-from neuralforge.response_bank import RunningStats
+from neuralforge.response_bank import (
+    RunningStats,
+    collect_response_bank,
+)
 from neuralforge.trainer import train_groupwise
 
 
@@ -25,16 +28,12 @@ def small_model():
 def test_group_partition_and_forward():
     model = small_model()
     assert model.config.group_sizes == [2, 2]
-    result, responses = model.forward_with_responses(torch.zeros(3, 8))
+    result, responses = model.forward_with_responses(torch.randn(3, 8))
     assert result.shape == (3, 2)
     assert len(responses) == 2
     for response in responses:
         assert response.shape == (3, 8)
-        assert torch.allclose(
-            response.mean(dim=-1),
-            torch.zeros(3),
-            atol=1e-5
-        )
+        assert torch.allclose(response.mean(dim=-1), torch.zeros(3), atol=1e-5)
     assert torch.isfinite(result).all()
 
 
@@ -80,3 +79,15 @@ def test_running_response_contract():
     assert result["count"] == 4
     assert abs(result["mean"] - 2.0) < 1e-8
     assert abs(result["std"] - (2.0) ** 0.5) < 1e-8
+
+
+def test_response_collection_keeps_boundary_vectors():
+    model = small_model()
+    inputs = torch.randn(5, 8)
+    entries, vectors = collect_response_bank(
+        model, inputs, batch_size=2, device="cpu", max_samples=3
+    )
+    assert len(entries) == 2
+    assert vectors["group_0000"].shape == (3, 8)
+    assert vectors["group_0001"].shape == (3, 8)
+    assert np.isfinite(vectors["group_0000"]).all()

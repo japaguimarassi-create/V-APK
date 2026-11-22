@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+import numpy as np
 import torch
 
 from .native import calculate_stats
@@ -52,18 +53,30 @@ class RunningStats:
         }
 
 
-def collect_response_bank(model, inputs, batch_size, device, native_library=None):
+def collect_response_bank(
+    model, inputs, batch_size, device, native_library=None, max_samples=128
+):
     totals = [RunningStats() for _ in model.groups]
+    response_batches = [[] for _ in model.groups]
+    captured = 0
     model.eval()
+
     with torch.no_grad():
         for start in range(0, len(inputs), batch_size):
             batch = inputs[start:start + batch_size].to(device)
             _, responses = model.forward_with_responses(batch)
+            remaining = max(max_samples - captured, 0)
+            take = min(remaining, batch.shape[0])
+
             for index, response in enumerate(responses):
                 values = response.detach().float().cpu().contiguous().numpy()
                 totals[index].update(calculate_stats(values, native_library))
+                if take:
+                    response_batches[index].append(values[:take].copy())
 
-    return [
+            captured += take
+
+    entries = [
         {
             "group_index": index,
             "layer_start": sum(model.config.group_sizes[:index]),
@@ -72,6 +85,12 @@ def collect_response_bank(model, inputs, batch_size, device, native_library=None
         }
         for index in range(len(totals))
     ]
+    vectors = {
+        f"group_{index:04d}": np.concatenate(parts, axis=0)
+        if parts else np.empty((0, model.config.width), dtype=np.float32)
+        for index, parts in enumerate(response_batches)
+    }
+    return entries, vectors
 
 
 def save_response_bank(entries, path):
@@ -79,4 +98,13 @@ def save_response_bank(entries, path):
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(entries, indent=2), encoding="utf-8")
+    temporary.replace(path)
+
+
+def save_response_vectors(vectors, path):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.stem + ".tmp" + path.suffix)
+    with temporary.open("wb") as stream:
+        np.savez_compressed(stream, **vectors)
     temporary.replace(path)

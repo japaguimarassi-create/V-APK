@@ -23,9 +23,10 @@ The project does not train 64 disconnected networks on unrelated random inputs. 
 3. The same process is repeated for groups 1 through 63. Earlier groups provide real activations; later groups transmit the gradient without changing their parameters.
 4. Each trained group is saved separately as groups/group_XXXX.pt.
 5. The response bank records each group's activation distribution: count, mean, standard deviation, minimum, maximum, and RMS. The C++ library computes the FP32 batch statistics; Python combines them into stable running summaries.
-6. Every group boundary includes a learned per-feature scale and offset (LayerNorm). It keeps the interface between groups numerically organized while remaining trainable in that group's stage.
-7. All group checkpoints and the head are assembled into assembled.pt, with manifest.json describing the parameter layout.
-8. Optional joint fine-tuning can then update all groups together.
+6. The first 128 responses per group are also retained as actual activation vectors in response_samples.npz (configurable with response-samples).
+7. Every group boundary includes a learned per-feature scale and offset (LayerNorm). It keeps the interface between groups numerically organized while remaining trainable in that group's stage.
+8. All group checkpoints and the head are assembled into assembled.pt, with manifest.json describing the parameter layout.
+9. Optional joint fine-tuning can then update all groups together.
 
 This makes the learned parameters compatible because every group is optimized in the context of the same end-to-end path. The response bank is an audit record of the actual activations passed between groups, not a substitute for training data.
 
@@ -99,7 +100,7 @@ For a small smoke test, use input-size 8, hidden-layers 4, width 8, output-size 
 PYTHONPATH=python pytest -q
 \`\`\`
 
-The tests verify group partitioning, normalized inter-group responses, forward dimensions, a real groupwise update, separate group checkpoints, and C++ response statistics.
+The tests verify group partitioning, normalized inter-group responses, forward dimensions, a real groupwise update, separate group checkpoints, retained response vectors, and C++ response statistics.
 
 ## Important distinction
 

@@ -9,7 +9,11 @@ from .checkpoint import save_assembled
 from .config import NetworkConfig
 from .model import GroupedDenseNetwork
 from .native import load_native_library
-from .response_bank import collect_response_bank, save_response_bank
+from .response_bank import (
+    collect_response_bank,
+    save_response_bank,
+    save_response_vectors,
+)
 from .trainer import train_groupwise
 
 
@@ -33,6 +37,7 @@ def build_parser():
     parser.add_argument("--checkpoint-dir", default="checkpoints")
     parser.add_argument("--device", default="auto")
     parser.add_argument("--native-lib")
+    parser.add_argument("--response-samples", type=int, default=128)
     parser.add_argument("--execute", action="store_true",
                         help="Actually allocate and train the network.")
     return parser
@@ -60,6 +65,8 @@ def main(argv=None):
         raise SystemExit("--data is required when --execute is supplied.")
     if args.batch_size < 1 or args.group_cycles < 1 or args.group_epochs < 1:
         raise SystemExit("Batch size, group cycles, and group epochs must be positive.")
+    if args.response_samples < 0:
+        raise SystemExit("--response-samples cannot be negative.")
 
     dataset = np.load(args.data, allow_pickle=False)
     if args.x_key not in dataset or args.y_key not in dataset:
@@ -76,7 +83,12 @@ def main(argv=None):
 
     device = args.device
     if device == "auto":
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        if torch.cuda.is_available():
+            free_bytes, _ = torch.cuda.mem_get_info()
+            needed_bytes = int(config.fp32_parameter_bytes * 1.25)
+            device = "cuda" if free_bytes >= needed_bytes else "cpu"
+        else:
+            device = "cpu"
     if device.startswith("cuda") and not torch.cuda.is_available():
         raise RuntimeError("CUDA was requested but is unavailable.")
 
@@ -100,18 +112,21 @@ def main(argv=None):
     )
 
     native_library = load_native_library(args.native_lib)
-    response_bank = collect_response_bank(
-        model, tensor_x, args.batch_size, device, native_library
+    response_entries, response_vectors = collect_response_bank(
+        model, tensor_x, args.batch_size, device, native_library,
+        max_samples=args.response_samples
     )
-    save_response_bank(response_bank, output_dir / "response_bank.json")
-    manifest = save_assembled(model, output_dir, response_bank)
+    save_response_bank(response_entries, output_dir / "response_bank.json")
+    save_response_vectors(response_vectors, output_dir / "response_samples.npz")
+    manifest = save_assembled(model, output_dir, response_entries)
 
     (output_dir / "training_history.json").write_text(
         json.dumps(history, indent=2), encoding="utf-8"
     )
     print(f"Assembled checkpoint: {output_dir / 'assembled.pt'}")
     print(f"Group manifest: {manifest}")
-    print(f"Response bank: {output_dir / 'response_bank.json'}")
+    print(f"Response metrics: {output_dir / 'response_bank.json'}")
+    print(f"Response vectors: {output_dir / 'response_samples.npz'}")
     return 0
 
 
