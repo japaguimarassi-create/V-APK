@@ -9,9 +9,10 @@ Standalone Python + C++ training project stored inside the V-APK repository. It 
 - Fully connected FP32 linear transformations.
 - 64 sequential groups, 32 layers per group.
 - Each hidden layer uses a dense linear transform with a small residual path to make very deep optimization less fragile.
+- Every group ends with a trainable LayerNorm boundary so the next group receives a standardized activation representation.
 - A configurable output head follows the 2,048 hidden layers.
 
-The hidden matrices contain 2,147,483,648 FP32 weights. Including biases, residual scales, and the output head, the default model has approximately 2.151 billion parameters. Parameters alone require about 8.01 GiB in FP32. This is not a mobile-sized training workload.
+The hidden matrices contain 2,147,483,648 FP32 weights. Including biases, residual scales, group normalization parameters, and the output head, the default model has approximately 2.151 billion parameters. Parameters alone require about 8.01 GiB in FP32. This is not a mobile-sized training workload.
 
 ## How groups are trained and assembled
 
@@ -22,10 +23,11 @@ The project does not train 64 disconnected networks on unrelated random inputs. 
 3. The same process is repeated for groups 1 through 63. Earlier groups provide real activations; later groups transmit the gradient without changing their parameters.
 4. Each trained group is saved separately as groups/group_XXXX.pt.
 5. The response bank records each group's activation distribution: count, mean, standard deviation, minimum, maximum, and RMS. The C++ library computes the FP32 batch statistics; Python combines them into stable running summaries.
-6. All group checkpoints and the head are assembled into assembled.pt, with manifest.json describing the parameter layout.
-7. Optional joint fine-tuning can then update all groups together.
+6. Every group boundary includes a learned per-feature scale and offset (LayerNorm). It keeps the interface between groups numerically organized while remaining trainable in that group's stage.
+7. All group checkpoints and the head are assembled into assembled.pt, with manifest.json describing the parameter layout.
+8. Optional joint fine-tuning can then update all groups together.
 
-This makes the learned parameters compatible because every group is optimized in the context of the same end-to-end path. The response bank is an audit/calibration record, not a substitute for training data or a claim that independently learned weights are automatically compatible.
+This makes the learned parameters compatible because every group is optimized in the context of the same end-to-end path. The response bank is an audit record of the actual activations passed between groups, not a substitute for training data.
 
 ## Memory and compute limits
 
@@ -97,7 +99,7 @@ For a small smoke test, use input-size 8, hidden-layers 4, width 8, output-size 
 PYTHONPATH=python pytest -q
 \`\`\`
 
-The tests verify group partitioning, forward dimensions, a real groupwise update, separate group checkpoints, and C++ response statistics.
+The tests verify group partitioning, normalized inter-group responses, forward dimensions, a real groupwise update, separate group checkpoints, and C++ response statistics.
 
 ## Important distinction
 

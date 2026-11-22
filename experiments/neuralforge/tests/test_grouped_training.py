@@ -25,8 +25,16 @@ def small_model():
 def test_group_partition_and_forward():
     model = small_model()
     assert model.config.group_sizes == [2, 2]
-    result = model(torch.zeros(3, 8))
+    result, responses = model.forward_with_responses(torch.zeros(3, 8))
     assert result.shape == (3, 2)
+    assert len(responses) == 2
+    for response in responses:
+        assert response.shape == (3, 8)
+        assert torch.allclose(
+            response.mean(dim=-1),
+            torch.zeros(3),
+            atol=1e-5
+        )
     assert torch.isfinite(result).all()
 
 

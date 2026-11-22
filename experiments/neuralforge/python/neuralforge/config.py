@@ -42,7 +42,9 @@ class NetworkConfig:
         hidden_biases = self.hidden_layers * self.width
         head_biases = self.output_size
         residual_scales = self.hidden_layers
-        return self.dense_weight_count + hidden_biases + head_biases + residual_scales
+        group_norm_parameters = 2 * self.width * self.group_count
+        return (self.dense_weight_count + hidden_biases + head_biases +
+                residual_scales + group_norm_parameters)
 
     @property
     def fp32_parameter_bytes(self):
@@ -50,7 +52,10 @@ class NetworkConfig:
 
     @property
     def group_fp32_bytes(self):
-        return self.layers_per_group * (self.width * self.width + self.width + 1) * 4
+        layer_parameters = self.layers_per_group * (
+            self.width * self.width + self.width + 1
+        )
+        return (layer_parameters + 2 * self.width) * 4
 
     def to_dict(self):
         return asdict(self)

@@ -25,12 +25,13 @@ class DenseGroup(nn.Module):
             DenseResidualLayer(width, residual_scale)
             for _ in range(layer_count)
         ])
+        self.response_norm = nn.LayerNorm(width, elementwise_affine=True)
 
     def forward(self, inputs):
         value = inputs
         for layer in self.layers:
             value = layer(value)
-        return value
+        return self.response_norm(value)
 
 
 class GroupedDenseNetwork(nn.Module):
