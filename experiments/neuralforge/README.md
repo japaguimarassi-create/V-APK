@@ -48,26 +48,26 @@ The 2,048-layer model should not be allocated on a phone with limited RAM. Use a
 
 From this directory:
 
-\`\`\`bash
+```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release -j2
-\`\`\`
+```
 
 The output is build/libresponse_stats.so on Linux, build/libresponse_stats.dylib on macOS, or build/response_stats.dll on Windows.
 
 ## Install Python dependencies
 
-\`\`\`bash
+```bash
 python -m pip install -r requirements.txt
-\`\`\`
+```
 
 Set PYTHONPATH=python when running commands from this directory.
 
 ## Inspect the complete architecture without allocating it
 
-\`\`\`bash
+```bash
 PYTHONPATH=python python -m neuralforge.cli
-\`\`\`
+```
 
 The default command prints the 2,048-layer/1,024-width configuration and memory estimate only. It does not allocate the network.
 
@@ -84,7 +84,7 @@ The targets are task-specific vectors. This implementation uses mean-squared err
 
 After compiling C++ and installing dependencies:
 
-\`\`\`bash
+```bash
 PYTHONPATH=python python -m neuralforge.cli \\
   --data dataset.npz \\
   --execute \\
@@ -94,7 +94,7 @@ PYTHONPATH=python python -m neuralforge.cli \\
   --group-epochs 1 \\
   --joint-epochs 0 \\
   --checkpoint-dir checkpoints
-\`\`\`
+```
 
 The CLI requires the execute flag to allocate the network. Remove that flag to perform a safe configuration-only inspection.
 
@@ -102,9 +102,9 @@ For a small smoke test, use input-size 8, hidden-layers 4, width 8, output-size 
 
 ## Tests
 
-\`\`\`bash
+```bash
 PYTHONPATH=python pytest -q
-\`\`\`
+```
 
 The tests verify group partitioning, normalized inter-group responses, forward dimensions, a real groupwise update, separate group checkpoints, retained response vectors, and C++ response statistics.
 
